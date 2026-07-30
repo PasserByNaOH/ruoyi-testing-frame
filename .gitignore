@@ -1,2 +1,14 @@
 project-startup.md
 ruoyi-migration-summary.md
+
+# 敏感配置
+conf/config.ini
+
+# 开发阶段自测用例
+yamlRead_test.yaml
+
+# Python 缓存
+__pycache__/
+
+# 运行时日志
+logs/*.log
