@@ -104,6 +104,8 @@ def clear_runtime():
 # ═══════════════════════════════════════════════════════════
 # 自测入口：验证 YAML 读取是否正常
 # ═══════════════════════════════════════════════════════════
+
+
 if __name__ == "__main__":
      test_yaml = os.path.join(FILE_PATH["YAML"], "ruoyi", "login", "yamlRead_test.yaml")
      print(f"读取测试文件: {test_yaml}")

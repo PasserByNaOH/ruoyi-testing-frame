@@ -49,3 +49,17 @@ def setup_logger():
 
 
 logs = setup_logger()
+
+
+# ═══════════════════════════════════════════════════════════
+# 自测入口：验证日志输出到文件和控制台
+# ═══════════════════════════════════════════════════════════
+if __name__ == "__main__":
+    logs.debug("DEBUG 级别 —— 控制台不会显示（控制台设的 INFO）")
+    logs.info("INFO 级别 —— 控制台和文件都应该出现")
+    logs.warning("WARNING 级别 —— 黄色警告")
+    logs.error("ERROR 级别 —— 红色错误")
+
+    print(f"\n日志文件路径: {logfile_name}")
+    print("请检查控制台输出（应有 INFO/WARNING/ERROR 三条，没有 DEBUG）")
+    print("再打开日志文件确认内容已写入")
