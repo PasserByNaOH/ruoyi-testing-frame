@@ -1,0 +1,214 @@
+# ============================================================
+# 登录失败测试用例（13 条无效等价类）
+# ============================================================
+# 统一测试账号：LoginTestUser / 123456
+# 例外：停用用户 用 abandonUser，已删除用户 用 deleteUser
+# ============================================================
+
+base_info:
+  api_name: 登录
+  url: /login
+  method: post
+  headers:
+    Content-Type: application/json;charset=UTF-8
+
+test_cases:
+  # ═══════════════════════════════════════════════════════════
+  # 关卡① 验证码层
+  # ═══════════════════════════════════════════════════════════
+
+  - case_name: 错误验证码
+    captcha_mode: wrong
+    json:
+      username: LoginTestUser
+      password: "123456"
+      code: WRONG_CODE
+    validations:
+      - type: status_code
+        expected: 200
+      - type: body_code
+        expected: 500
+      - type: body_contains
+        keyword: 验证码错误
+      - type: token_absent
+
+  - case_name: 过期验证码
+    captcha_mode: fake_uuid
+    json:
+      username: LoginTestUser
+      password: "123456"
+      uuid: expired-test-uuid-not-exist
+      code: "0000"
+    validations:
+      - type: status_code
+        expected: 200
+      - type: body_code
+        expected: 500
+      - type: body_contains
+        keyword: 验证码已失效
+      - type: token_absent
+
+  - case_name: code字段缺失
+    captcha_mode: missing
+    json:
+      username: LoginTestUser
+      password: "123456"
+      uuid: fake-uuid-missing-code
+    validations:
+      - type: status_code
+        expected: 200
+      - type: body_code
+        expected: 500
+      - type: token_absent
+
+  # ═══════════════════════════════════════════════════════════
+  # 关卡② loginPreCheck 前置校验层
+  # ═══════════════════════════════════════════════════════════
+
+  - case_name: 空用户名
+    captcha_mode: valid
+    json:
+      username: ""
+      password: "123456"
+    validations:
+      - type: status_code
+        expected: 200
+      - type: body_code
+        expected: 500
+      - type: body_contains
+        keyword: 用户不存在/密码错误
+      - type: token_absent
+
+  - case_name: 空密码
+    captcha_mode: valid
+    json:
+      username: LoginTestUser
+      password: ""
+    validations:
+      - type: status_code
+        expected: 200
+      - type: body_code
+        expected: 500
+      - type: body_contains
+        keyword: 用户不存在/密码错误
+      - type: token_absent
+
+  - case_name: 密码长度小于5
+    captcha_mode: valid
+    json:
+      username: LoginTestUser
+      password: "1234"
+    validations:
+      - type: status_code
+        expected: 200
+      - type: body_code
+        expected: 500
+      - type: body_contains
+        keyword: 用户不存在/密码错误
+      - type: token_absent
+
+  - case_name: 密码长度大于20
+    captcha_mode: valid
+    json:
+      username: LoginTestUser
+      password: "123456789012345678901"
+    validations:
+      - type: status_code
+        expected: 200
+      - type: body_code
+        expected: 500
+      - type: body_contains
+        keyword: 用户不存在/密码错误
+      - type: token_absent
+
+  # ═══════════════════════════════════════════════════════════
+  # 关卡③ authenticate 认证层
+  # ═══════════════════════════════════════════════════════════
+
+  - case_name: 密码错误
+    captcha_mode: valid
+    json:
+      username: LoginTestUser
+      password: wrong_password
+    validations:
+      - type: status_code
+        expected: 200
+      - type: body_code
+        expected: 500
+      - type: body_contains
+        keyword: 用户不存在/密码错误
+      - type: token_absent
+
+  - case_name: 用户不存在
+    captcha_mode: valid
+    json:
+      username: no_such_user_xyz
+      password: "123456"
+    validations:
+      - type: status_code
+        expected: 200
+      - type: body_code
+        expected: 500
+      - type: body_contains
+        keyword: 用户不存在/密码错误
+      - type: token_absent
+
+  - case_name: 5次错误触发锁定
+    captcha_mode: valid
+    setup:
+      redis:
+        pwd_err_cnt:LoginTestUser: 5
+    json:
+      username: LoginTestUser
+      password: wrong_password
+    validations:
+      - type: status_code
+        expected: 200
+      - type: body_code
+        expected: 500
+      - type: body_contains
+        keyword: 密码输入错误5次
+      - type: token_absent
+
+  - case_name: 锁定后正确密码登录
+    captcha_mode: valid
+    setup:
+      redis:
+        pwd_err_cnt:LoginTestUser: 5
+    json:
+      username: LoginTestUser
+      password: "123456"
+    validations:
+      - type: status_code
+        expected: 200
+      - type: body_code
+        expected: 500
+      - type: body_contains
+        keyword: 密码输入错误5次
+      - type: token_absent
+
+  - case_name: 停用用户
+    captcha_mode: valid
+    json:
+      username: abandonUser
+      password: "123456"
+    validations:
+      - type: status_code
+        expected: 200
+      - type: body_code
+        expected: 500
+      - type: token_absent
+
+  - case_name: 已删除用户
+    captcha_mode: valid
+    json:
+      username: deleteUser
+      password: "123456"
+    validations:
+      - type: status_code
+        expected: 200
+      - type: body_code
+        expected: 500
+      - type: body_contains
+        keyword: 用户不存在/密码错误
+      - type: token_absent

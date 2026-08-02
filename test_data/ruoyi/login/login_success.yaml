@@ -1,0 +1,32 @@
+base_info:
+  url: /login
+  method: post
+  headers:
+    Content-Type: application/json;charset=UTF-8
+
+test_cases:
+  - case_name: 正常登录
+    captcha_mode: valid
+    json:
+        username: LoginTestUser
+        password: "123456"
+    extract:
+        token: $.token               # ★ 提取 token → runtime.yaml
+    validations:
+        - type: status_code
+          expected: 200
+        - type: body_code
+          expected: 200
+        - type: body_contains
+          keyword: 操作成功
+        - type: token_not_empty
+
+  - case_name: Redis检查，token是否可用
+    captcha_mode: skip             # 不处理验证码
+    url: /getInfo                  # 覆盖 base_info
+    method: get                    # 覆盖 base_info
+    validations:
+      - type: status_code
+        expected: 200
+      - type: body_code
+        expected: 200

@@ -5,7 +5,7 @@ from json.decoder import JSONDecodeError
 
 import jsonpath
 
-from conf.setting import FILE_PATH
+from conf.setting import FILE_PATH, TOKEN_PREFIX
 from utils.assertions import run_validations
 from utils.debugtalk import DebugTalk
 from utils.readyaml import get_runtime, write_runtime, clear_runtime
@@ -53,7 +53,7 @@ class ApiEngine:
             str_data = str_data.replace(ref_all, str(result))
 
         # 还原数据类型
-        if data and isinstance(data, dict):
+        if data and isinstance(data, (dict, list)):
             return json.loads(str_data)
         return str_data
 
@@ -66,10 +66,12 @@ class ApiEngine:
         执行一条 YAML 用例：
         拼 URL → 替换变量 → 调 sendrequest → 提取数据 → 断言。
         """
-        # 1. 基本信息
-        url = self.host + base_info["url"]
-        method = base_info["method"]
-        headers = self.replace_load(base_info["headers"])
+        # 1. 基本信息（用例可选覆盖 url / method / headers）
+        url = self.host + (test_case.pop("url", None) or base_info["url"])
+        method = test_case.pop("method", None) or base_info["method"]
+        case_headers = test_case.pop("headers", None)
+        headers = self.replace_load(case_headers if case_headers else base_info["headers"])
+        headers = self.inject_token(headers)
         case_name = test_case.pop("case_name")
         logs.info(f"用例: {case_name}")
 
@@ -165,8 +167,18 @@ class ApiEngine:
         raise NotImplementedError("extract_data_list 将在 Phase 2 实现")
 
     def inject_token(self, headers):
-        """PHASE 2: 自动从 runtime.yaml 读取 token 注入 headers。"""
-        raise NotImplementedError("inject_token 将在 Phase 2 实现")
+        """
+        自动从 runtime.yaml 读取 token，注入 Authorization header。
+        如果 headers 中已有 Authorization，则跳过（用户已显式指定）。
+        """
+        if "Authorization" in headers or "authorization" in headers:
+            return headers
+
+        token = get_runtime("token")
+        if token:
+            headers["Authorization"] = TOKEN_PREFIX + token
+            logs.info("已自动注入 Authorization header")
+        return headers
 
     def handle_file_upload(self, files):
         """PHASE 4: 文件上传预处理。"""

@@ -1,5 +1,6 @@
 project-startup.md
 ruoyi-migration-summary.md
+problem.md
 
 # 敏感配置
 conf/config.ini
@@ -12,3 +13,6 @@ __pycache__/
 
 # 运行时日志
 logs/*.log
+
+# 运行时变量（含 token，不能提交）
+data/runtime.yaml
