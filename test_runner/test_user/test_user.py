@@ -34,6 +34,10 @@ _resetPwd_cases = get_testcase_yaml(
     os.path.join(FILE_PATH["YAML"], "ruoyi", "system", "user_resetPwd.yaml")
 )
 
+_changeStatus_cases = get_testcase_yaml(
+    os.path.join(FILE_PATH["YAML"], "ruoyi", "system", "user_changeStatus.yaml")
+)
+
 # ═══════════════════════════════════════════════════════════════
 # POST /system/user — 新增用户（11 条）
 # ═══════════════════════════════════════════════════════════════
@@ -99,6 +103,26 @@ def test_user_delete(base_url, base_info, case):
     ids=[c[1]["case_name"] for c in _resetPwd_cases],
 )
 def test_user_resetPwd(base_url, base_info, case):
+    username = case.get("setup", {}).get("create_user")
+    if username:
+        user_id = create_user(base_url, username)
+        case["json"]["userId"] = user_id
+        case["json"]["userName"] = username
+
+    engine = ApiEngine()
+    engine.specification_yaml(dict(base_info), dict(case))
+
+
+# ═══════════════════════════════════════════════════════════════
+# PUT /system/user/changeStatus — 状态切换（3 条）
+# ═══════════════════════════════════════════════════════════════
+
+@pytest.mark.parametrize(
+    "base_info, case",
+    _changeStatus_cases,
+    ids=[c[1]["case_name"] for c in _changeStatus_cases],
+)
+def test_user_changeStatus(base_url, base_info, case):
     username = case.get("setup", {}).get("create_user")
     if username:
         user_id = create_user(base_url, username)

@@ -1,0 +1,61 @@
+# ============================================================
+# 状态切换测试用例（3 条）
+# ============================================================
+# 前置：admin 已登录，token 在 runtime.yaml
+# 用例需要 setup.create_user 时：test 函数创建前置用户 + 注入 userId
+# ============================================================
+
+base_info:
+  api_name: 状态切换
+  url: /system/user/changeStatus
+  method: put
+  headers:
+    Content-Type: application/json;charset=UTF-8
+
+test_cases:
+  # ═══════════════════════════════════════════════════════════
+  # 有效等价类
+  # ═══════════════════════════════════════════════════════════
+
+  - case_name: 停用用户
+    setup:
+      create_user: at_status_07
+    json:
+      status: "1"
+    validations:
+      - type: status_code
+        expected: 200
+      - type: body_code
+        expected: 200
+      - type: body_contains
+        keyword: 操作成功
+
+  - case_name: 启用用户
+    setup:
+      create_user: at_status_07a
+    json:
+      status: "0"
+    validations:
+      - type: status_code
+        expected: 200
+      - type: body_code
+        expected: 200
+      - type: body_contains
+        keyword: 操作成功
+
+  # ═══════════════════════════════════════════════════════════
+  # 无效等价类
+  # ═══════════════════════════════════════════════════════════
+
+  - case_name: 停用admin
+    json:
+      userId: 1
+      userName: admin
+      status: "1"
+    validations:
+      - type: status_code
+        expected: 200
+      - type: body_code
+        expected: 500
+      - type: body_contains
+        keyword: 不允许操作超级管理员用户
