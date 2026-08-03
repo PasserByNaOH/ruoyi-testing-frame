@@ -1,0 +1,53 @@
+# ============================================================
+# 删除用户测试用例（3 条）
+# ============================================================
+# 前置：admin 已登录，token 在 runtime.yaml
+# 用例需要 setup.create_user 时：test 函数创建前置用户 + 注入 url
+# ============================================================
+
+base_info:
+  api_name: 删除用户
+  url: /system/user
+  method: delete
+  headers:
+    Content-Type: application/json;charset=UTF-8
+
+test_cases:
+  # ═══════════════════════════════════════════════════════════
+  # 有效等价类
+  # ═══════════════════════════════════════════════════════════
+
+  - case_name: 删除用户-正常
+    setup:
+      create_user: at_del_05
+    validations:
+      - type: status_code
+        expected: 200
+      - type: body_code
+        expected: 200
+      - type: body_contains
+        keyword: 操作成功
+
+  # ═══════════════════════════════════════════════════════════
+  # 无效等价类
+  # ═══════════════════════════════════════════════════════════
+
+  - case_name: 删除自己
+    url: /system/user/1
+    validations:
+      - type: status_code
+        expected: 200
+      - type: body_code
+        expected: 500
+      - type: body_contains
+        keyword: 当前用户不能删除
+
+  - case_name: 删除不存在用户
+    url: /system/user/99999
+    validations:
+      - type: status_code
+        expected: 200
+      - type: body_code
+        expected: 500
+      - type: body_not_contains
+        keyword: 操作成功

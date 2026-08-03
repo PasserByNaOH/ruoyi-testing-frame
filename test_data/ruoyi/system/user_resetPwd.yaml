@@ -1,0 +1,61 @@
+# ============================================================
+# 重置密码测试用例（3 条）
+# ============================================================
+# 前置：admin 已登录，token 在 runtime.yaml
+# 注意：resetPwd 要求 Body 含 userName（SysUser.java 有 @NotBlank）
+# ============================================================
+
+base_info:
+  api_name: 重置密码
+  url: /system/user/resetPwd
+  method: put
+  headers:
+    Content-Type: application/json;charset=UTF-8
+
+test_cases:
+  # ═══════════════════════════════════════════════════════════
+  # 有效等价类
+  # ═══════════════════════════════════════════════════════════
+
+  - case_name: 重置密码-正常
+    setup:
+      create_user: at_pwd_06
+    json:
+      password: newpwd123
+    validations:
+      - type: status_code
+        expected: 200
+      - type: body_code
+        expected: 200
+      - type: body_contains
+        keyword: 操作成功
+
+  # ═══════════════════════════════════════════════════════════
+  # 无效等价类
+  # ═══════════════════════════════════════════════════════════
+
+  - case_name: 重置admin密码
+    json:
+      userId: 1
+      userName: admin
+      password: newpwd123
+    validations:
+      - type: status_code
+        expected: 200
+      - type: body_code
+        expected: 500
+      - type: body_contains
+        keyword: 不允许操作超级管理员用户
+
+  - case_name: 重置不存在用户
+    json:
+      userId: 99999
+      userName: 不存在用户
+      password: newpwd123
+    validations:
+      - type: status_code
+        expected: 200
+      - type: body_code
+        expected: 500
+      - type: body_not_contains
+        keyword: 操作成功

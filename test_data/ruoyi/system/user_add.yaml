@@ -1,0 +1,230 @@
+# ============================================================
+# 新增用户测试用例（11 条）
+# ============================================================
+# 前置：admin 已登录（ensure_admin_login fixture 写 token）
+# 清理：所有 at_% 用户在 session 结束时由 clean_at_users 物理删除
+# ============================================================
+
+base_info:
+  api_name: 新增用户
+  url: /system/user
+  method: post
+  headers:
+    Content-Type: application/json;charset=UTF-8
+
+test_cases:
+  # ═══════════════════════════════════════════════════════════
+  # 有效等价类
+  # ═══════════════════════════════════════════════════════════
+
+  - case_name: 新增用户-正常
+    json:
+      deptId: 103
+      userName: at_add_01
+      nickName: 测试新增01
+      password: "123456"
+      sex: "0"
+      status: "0"
+      postIds: [2, 3]
+      roleIds: [1, 2]
+    validations:
+      - type: status_code
+        expected: 200
+      - type: body_code
+        expected: 200
+      - type: body_contains
+        keyword: 操作成功
+
+  # ═══════════════════════════════════════════════════════════
+  # 唯一性冲突
+  # ═══════════════════════════════════════════════════════════
+
+  - case_name: 新增-用户名重复
+    json:
+      deptId: 103
+      userName: admin
+      nickName: 用户名重复测试
+      password: "123456"
+      sex: "0"
+      status: "0"
+      postIds: [2]
+      roleIds: [2]
+    validations:
+      - type: status_code
+        expected: 200
+      - type: body_code
+        expected: 500
+      - type: body_contains
+        keyword: 登录账号已存在
+
+  - case_name: 新增-手机号重复
+    json:
+      deptId: 103
+      userName: at_dup_phone
+      nickName: 手机重复测试
+      password: "123456"
+      phonenumber: "15888888888"
+      sex: "0"
+      status: "0"
+      postIds: [2]
+      roleIds: [2]
+    validations:
+      - type: status_code
+        expected: 200
+      - type: body_code
+        expected: 500
+      - type: body_contains
+        keyword: 手机号码已存在
+
+  - case_name: 新增-邮箱重复
+    json:
+      deptId: 103
+      userName: at_dup_email
+      nickName: 邮箱重复测试
+      password: "123456"
+      email: ry@163.com
+      sex: "0"
+      status: "0"
+      postIds: [2]
+      roleIds: [2]
+    validations:
+      - type: status_code
+        expected: 200
+      - type: body_code
+        expected: 500
+      - type: body_contains
+        keyword: 邮箱账号已存在
+
+  # ═══════════════════════════════════════════════════════════
+  # Bean 校验（@NotBlank / @Size / @Email）
+  # ═══════════════════════════════════════════════════════════
+
+  - case_name: 新增-用户名为空
+    json:
+      deptId: 103
+      userName: ""
+      nickName: 空用户名测试
+      password: "123456"
+      sex: "0"
+      status: "0"
+      postIds: [2]
+      roleIds: [2]
+    validations:
+      - type: status_code
+        expected: 200
+      - type: body_code
+        expected: 500
+      - type: body_not_contains
+        keyword: 操作成功
+
+  - case_name: 新增-用户名超长
+    json:
+      deptId: 103
+      userName: "1234567890123456789012345678901"
+      nickName: 用户名超长测试
+      password: "123456"
+      sex: "0"
+      status: "0"
+      postIds: [2]
+      roleIds: [2]
+    validations:
+      - type: status_code
+        expected: 200
+      - type: body_code
+        expected: 500
+      - type: body_not_contains
+        keyword: 操作成功
+
+  - case_name: 新增-邮箱格式非法
+    json:
+      deptId: 103
+      userName: at_bad_email
+      nickName: 非法邮箱测试
+      password: "123456"
+      email: not-an-email
+      sex: "0"
+      status: "0"
+      postIds: [2]
+      roleIds: [2]
+    validations:
+      - type: status_code
+        expected: 200
+      - type: body_code
+        expected: 500
+      - type: body_not_contains
+        keyword: 操作成功
+
+  # ═══════════════════════════════════════════════════════════
+  # 前后端校验缺口（前端拦截，后端放行）
+  # ═══════════════════════════════════════════════════════════
+
+  - case_name: 新增-1字符用户名
+    json:
+      deptId: 103
+      userName: "a"
+      nickName: 1字符用户名
+      password: "123456"
+      sex: "0"
+      status: "0"
+      postIds: [2]
+      roleIds: [2]
+    validations:
+      - type: status_code
+        expected: 200
+      - type: body_code
+        expected: 200
+      - type: body_not_contains
+        keyword: 失败
+
+  - case_name: 新增-空密码
+    json:
+      deptId: 103
+      userName: at_gap_pwd
+      nickName: 空密码
+      password: ""
+      sex: "0"
+      status: "0"
+      postIds: [2]
+      roleIds: [2]
+    validations:
+      - type: status_code
+        expected: 200
+      - type: body_code
+        expected: 200
+      - type: body_not_contains
+        keyword: 失败
+
+  - case_name: 新增-空昵称
+    json:
+      deptId: 103
+      userName: at_gap_nick
+      nickName: ""
+      password: "123456"
+      sex: "0"
+      status: "0"
+      postIds: [2]
+      roleIds: [2]
+    validations:
+      - type: status_code
+        expected: 200
+      - type: body_code
+        expected: 500
+      - type: body_not_contains
+        keyword: 操作成功
+
+  - case_name: 新增-无部门
+    json:
+      userName: at_gap_dept
+      nickName: 无部门
+      password: "123456"
+      sex: "0"
+      status: "0"
+      postIds: [2]
+      roleIds: [2]
+    validations:
+      - type: status_code
+        expected: 200
+      - type: body_code
+        expected: 200
+      - type: body_not_contains
+        keyword: 失败

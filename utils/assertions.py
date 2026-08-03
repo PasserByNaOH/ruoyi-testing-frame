@@ -19,13 +19,22 @@ def assert_body_code(resp, rule):
 
 
 def assert_body_contains(resp, rule):
-     """断言 msg 包含指定关键字。"""
-     actual = resp.json()
-     msg = actual.get("msg", "")
-     assert rule["keyword"] in msg, (
+     """断言响应体包含指定关键字（查整个 JSON 字符串）。"""
+     body_text = resp.text
+     assert rule["keyword"] in body_text, (
           f"body_contains 断言失败\n"
-          f"  预期 msg 包含: {rule['keyword']}\n"
-          f"  实际 msg:      {msg}"
+          f"  预期响应包含: {rule['keyword']}\n"
+          f"  实际响应:     {body_text}"
+     )
+
+
+def assert_body_not_contains(resp, rule):
+     """断言响应体不包含指定关键字（查整个 JSON 字符串）。"""
+     body_text = resp.text
+     assert rule["keyword"] not in body_text, (
+          f"body_not_contains 断言失败\n"
+          f"  预期响应不包含: {rule['keyword']}\n"
+          f"  实际响应:       {body_text}"
      )
 
 
@@ -50,6 +59,7 @@ VALIDATORS = {
      "status_code":     assert_status_code,
      "body_code":       assert_body_code,
      "body_contains":   assert_body_contains,
+     "body_not_contains": assert_body_not_contains,
      "token_not_empty": assert_token_not_empty,
      "token_absent":    assert_token_absent,
      "excel_content":    assert_excel_content,

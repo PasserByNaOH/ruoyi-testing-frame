@@ -1,0 +1,99 @@
+# ============================================================
+# 编辑用户测试用例（4 条）
+# ============================================================
+# 前置：admin 已登录，token 在 runtime.yaml
+# 每条用例通过 setup.create_user 创建独立前置用户
+# ============================================================
+
+base_info:
+  api_name: 编辑用户
+  url: /system/user
+  method: put
+  headers:
+    Content-Type: application/json;charset=UTF-8
+
+test_cases:
+  # ═══════════════════════════════════════════════════════════
+  # 有效等价类
+  # ═══════════════════════════════════════════════════════════
+
+  - case_name: 编辑用户-正常
+    setup:
+      create_user: at_edit_04
+    json:
+      deptId: 103
+      nickName: 编辑后昵称
+      phonenumber: "13900139001"
+      email: edit04@test.com
+      sex: "1"
+      status: "0"
+      postIds: [3]
+      roleIds: [2]
+    validations:
+      - type: status_code
+        expected: 200
+      - type: body_code
+        expected: 200
+      - type: body_contains
+        keyword: 操作成功
+
+  # ═══════════════════════════════════════════════════════════
+  # 唯一性冲突
+  # ═══════════════════════════════════════════════════════════
+
+  - case_name: 编辑-用户名重复
+    setup:
+      create_user: at_eun_04a
+    json:
+      deptId: 103
+      userName: admin
+      nickName: 用户名重复编辑
+      sex: "0"
+      status: "0"
+      postIds: [2]
+      roleIds: [2]
+    validations:
+      - type: status_code
+        expected: 200
+      - type: body_code
+        expected: 500
+      - type: body_contains
+        keyword: 登录账号已存在
+
+  - case_name: 编辑-手机号重复
+    setup:
+      create_user: at_eph_04b
+    json:
+      deptId: 103
+      nickName: 手机重复编辑
+      phonenumber: "15888888888"
+      sex: "0"
+      status: "0"
+      postIds: [2]
+      roleIds: [2]
+    validations:
+      - type: status_code
+        expected: 200
+      - type: body_code
+        expected: 500
+      - type: body_contains
+        keyword: 手机号码已存在
+
+  - case_name: 编辑-邮箱重复
+    setup:
+      create_user: at_eem_04c
+    json:
+      deptId: 103
+      nickName: 邮箱重复编辑
+      email: ry@163.com
+      sex: "0"
+      status: "0"
+      postIds: [2]
+      roleIds: [2]
+    validations:
+      - type: status_code
+        expected: 200
+      - type: body_code
+        expected: 500
+      - type: body_contains
+        keyword: 邮箱账号已存在

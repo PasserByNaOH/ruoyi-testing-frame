@@ -2,13 +2,16 @@
 pytest 根级 conftest.py —— 基础设施 fixtures
 
 Phase 1: SSH 隧道（Redis + MySQL 双端口转发）
+Phase 3: base_url + redis_client（session 级，所有子模块继承）
 """
 
 import pytest
+import redis
 from configparser import ConfigParser
 from sshtunnel import SSHTunnelForwarder
 
 from conf.setting import FILE_PATH
+from utils.debugtalk import DebugTalk
 from utils.recordlog import logs
 
 
@@ -60,3 +63,35 @@ def ssh_tunnel():
 
     tunnel.stop()
     logs.info("SSH 隧道已关闭")
+
+
+@pytest.fixture(scope="session")
+def base_url():
+    """服务器地址，所有 API 测试共用。"""
+    cf = _read_config()
+    return cf.get("api_envi", "host")
+
+
+@pytest.fixture(scope="session")
+def redis_client(ssh_tunnel):
+    """
+    SSH 隧道连接 Redis，注入 DebugTalk。
+    session 级：只连一次，全局复用。
+    """
+    cf = _read_config()
+
+    r = redis.Redis(
+        host="127.0.0.1",
+        port=ssh_tunnel["redis_port"],
+        password=cf.get("REDIS", "password") or None,
+        db=cf.getint("REDIS", "db"),
+        decode_responses=True,
+    )
+    r.ping()
+    logs.info("Redis 连接成功，注入 DebugTalk")
+    DebugTalk.set_redis_client(r)
+
+    yield r
+
+    r.close()
+    logs.info("Redis 连接已关闭")
