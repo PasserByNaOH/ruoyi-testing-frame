@@ -27,6 +27,23 @@ test_cases:
         expected: 200
       - type: body_contains
         keyword: 操作成功
+    db_verify:
+      - desc: del_flag 为已删除
+        table: sys_user
+        column: del_flag
+        where: {user_id: "${get_runtime(created_user_id)}"}
+        expect: eq
+        value: "2"
+      - desc: sys_user_role 已清空
+        table: sys_user_role
+        where: {user_id: "${get_runtime(created_user_id)}"}
+        expect: count
+        value: 0
+      - desc: sys_user_post 已清空
+        table: sys_user_post
+        where: {user_id: "${get_runtime(created_user_id)}"}
+        expect: count
+        value: 0
 
   # ═══════════════════════════════════════════════════════════
   # 无效等价类

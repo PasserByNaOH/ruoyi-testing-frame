@@ -15,37 +15,45 @@ def _read_config():
 
 
 class ConnectMysql:
-     def __init__(self):
+     def __init__(self, host=None, port=None, user=None, password=None, database=None):
           cf = _read_config()
           mysql_conf = {
-               "host" : cf.get("MYSQL", "host"),
-               "port" : cf.getint("MYSQL", "port"),
-               "user": cf.get("MYSQL", "username"),
-               "password": cf.get("MYSQL", "password"),
-               "database": cf.get("MYSQL", "database"),
+               "host" : host or cf.get("MYSQL", "host"),
+               "port" : port or cf.getint("MYSQL", "port"),
+               "user": user or cf.get("MYSQL", "username"),
+               "password": password or cf.get("MYSQL", "password"),
+               "database": database or cf.get("MYSQL", "database"),
           }
 
           try:
-               self.conn =pymysql.connect(**mysql_conf,charset="utf-8")
-               self.cursor=self.conn.cursor(cursor=pymysql.cursors.DictCursor)
+               # autocommit=True：每条 SELECT 都是独立事务，
+               # 避免 REPEATABLE READ 导致 DB 验证读到旧快照
+               self.conn = pymysql.connect(**mysql_conf, charset="utf8mb4", autocommit=True)
+               self.cursor = self.conn.cursor(cursor=pymysql.cursors.DictCursor)
                logs.info(f"MySQL 连接成功: {mysql_conf['host']}:{mysql_conf['port']}/{mysql_conf['database']}")
           except Exception as e:
                logs.error(f"MySQL 连接失败: {e}")
                raise
 
-     # 查询，返回dict列表
-     def query(self, sql):
+     # 查询，返回 dict 列表
+     def query(self, sql, params=None):
           try:
-               self.cursor.execute(sql)
+               if params:
+                    self.cursor.execute(sql, params)
+               else:
+                    self.cursor.execute(sql)
                return self.cursor.fetchall()
           except Exception as e:
                logs.error(f"Mysql 查询失败：{sql} ------ {e}")
                raise
 
      # 执行——增删改
-     def execute(self,sql):
+     def execute(self, sql, params=None):
           try:
-               self.cursor.execute(sql)
+               if params:
+                    self.cursor.execute(sql, params)
+               else:
+                    self.cursor.execute(sql)
                self.conn.commit()
                logs.info(f"SQL 执行成功: {sql}")
           except Exception as e:

@@ -115,3 +115,53 @@ session 启动
 **当前状态**：根因未定位。切回 master 分支（70ae7f4），移除 YAML 中的 `db_verify` 块，先推进 changeStatus。DB 验证作为独立议题后续处理。
 
 **诊断关键代码**：见 `debug_edit.py`（临时文件，gitignore 排除）。步骤化执行创建→编辑→验证，每步可配合 DBeaver 观察。
+
+---
+
+**✅ 根因已定位（2026-08-04）**
+
+**问题**：`ConnectMysql` 默认 `autocommit=False`，所有查询共享同一个隐式事务 + 同一个 cursor。MySQL REPEATABLE READ 在事务第一次 SELECT 时拍下快照，后续查询看不到 API 在另一个连接中提交的修改。
+
+**传染链**：
+1. `test_user_edit` 的诊断查询在 API 调用前执行了 SELECT → 开启隐式事务、拍下快照
+2. 若依 API 在自己的数据库连接中 UPDATE + COMMIT
+3. `test_user_edit` 的 `run_db_verify` 仍在同一事务中 → 读到旧快照 → ❌ 失败
+4. `test_user_delete` 的 `run_db_verify` 用的是同一 cursor、同一事务 → 快照里 `at_del_05` 还没创建 → ❌ "用户不存在"
+5. `test_user_resetPwd` 同理
+
+**修复**：
+- `ConnectMysql.__init__` 添加 `autocommit=True` — 每条 SQL 独立事务，每次 SELECT 都是最新快照
+- `ConnectMysql.query()` 支持 `params` 参数 — 防止 SQL 注入
+- `ConnectMysql.__init__` 支持可选连接参数 — conftest 通过 SSH 隧道端口指定连接
+- `charset` 从 `"utf-8"` 修正为 `"utf8mb4"`
+
+---
+
+## 7. `cursor.execute(sql, ())` → `%` 被当作 Python 格式符
+
+**现象**：`ConnectMysql` 加了 `params` 支持后，所有 `clean_at_users` 的 DELETE 语句全部报：
+
+```
+TypeError: not enough arguments for format string
+```
+
+SQL 中含有 `LIKE 'at\_%'` —— 这是 MySQL LIKE 通配符，不是 Python 占位符。
+
+**原因**：`cursor.execute(sql, ())` —— 即使 params 是空 tuple `()`，pymysql 也会把整个 SQL 当作 Python 的 `%` 格式字符串处理。`LIKE 'at\_%'` 中的 `%` 被识别为格式符，但后面跟的是 `'`（单引号），不是合法的格式字符 → TypeError。
+
+如果传的是 `cursor.execute(sql)`（无第二参数），pymysql 不会做格式化，`%` 作为字面量直接发给 MySQL → 正常。
+
+**修复**：
+
+```python
+# 错误写法
+self.cursor.execute(sql, params or ())
+
+# 正确写法
+if params:
+    self.cursor.execute(sql, params)
+else:
+    self.cursor.execute(sql)
+```
+
+关键认知：pymysql 的 `cursor.execute(sql, params)` 本质上是 Python 的 `%` 字符串格式化 + SQL 转义——**不是**真正的参数化查询（prepared statement）。因此 SQL 里任何 `%` 都要加倍写成 `%%` 或者走无参数通道。

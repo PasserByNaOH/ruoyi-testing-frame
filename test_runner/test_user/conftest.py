@@ -2,17 +2,17 @@
 test_user/conftest.py —— 用户管理测试专用 fixtures
 
 提供：
-  db_connection       → session 级，SSH 隧道连 MySQL（物理删除用）
+  db_connection       → session 级，走 SSH 隧道连 MySQL（autocommit=True，物理删除/DB验证用）
   clean_at_users      → session 级 autouse，启动/结束时清理 at_% 残留
   ensure_admin_login  → session 级 autouse，登录 admin → token 写入 runtime.yaml
 """
 
 import pytest
-import pymysql
 import requests
 from configparser import ConfigParser
 
 from conf.setting import FILE_PATH
+from utils.connection import ConnectMysql
 from utils.debugtalk import DebugTalk
 from utils.readyaml import write_runtime
 from utils.recordlog import logs
@@ -26,35 +26,34 @@ def _read_config():
 
 @pytest.fixture(scope="session")
 def db_connection(ssh_tunnel):
-    """依赖根 ssh_tunnel，走 SSH 隧道本地端口连 MySQL。"""
+    """依赖根 ssh_tunnel，走 SSH 隧道本地端口连 MySQL（autocommit=True）。"""
     cf = _read_config()
-    conn = pymysql.connect(
+    db = ConnectMysql(
         host="127.0.0.1",
         port=ssh_tunnel["mysql_port"],
         user=cf.get("MYSQL", "username"),
         password=cf.get("MYSQL", "password"),
         database=cf.get("MYSQL", "database"),
-        charset="utf8mb4",
     )
     logs.info("MySQL 连接成功（test_user）")
 
-    yield conn
+    yield db
 
-    conn.close()
+    db.close()
     logs.info("MySQL 连接已关闭（test_user）")
 
 
-def _delete_at_users(cursor):
+def _delete_at_users(db):
     """物理删除所有 at_% 前缀的测试用户 + 单字符边界值用户（先子表后主表）。"""
-    cursor.execute(
+    db.execute(
         "DELETE FROM sys_user_role WHERE user_id IN "
         "(SELECT user_id FROM sys_user WHERE user_name LIKE 'at\\_%' OR user_name = 'a')"
     )
-    cursor.execute(
+    db.execute(
         "DELETE FROM sys_user_post WHERE user_id IN "
         "(SELECT user_id FROM sys_user WHERE user_name LIKE 'at\\_%' OR user_name = 'a')"
     )
-    cursor.execute(
+    db.execute(
         "DELETE FROM sys_user WHERE user_name LIKE 'at\\_%' OR user_name = 'a'"
     )
 
@@ -64,17 +63,14 @@ def clean_at_users(db_connection):
     """
     Session 启动时物理删除所有 at_% 残留用户（应对上次运行中断的情况）。
     Session 结束时再删一次，不留痕迹。
+    ConnectMysql autocommit=True，每次 execute 即时生效，无需手动 commit。
     """
-    cursor = db_connection.cursor()
-    _delete_at_users(cursor)
-    db_connection.commit()
+    _delete_at_users(db_connection)
     logs.info("已清理 at_% 残留用户（session 启动）")
 
     yield
 
-    _delete_at_users(cursor)
-    db_connection.commit()
-    cursor.close()
+    _delete_at_users(db_connection)
     logs.info("已清理 at_% 残留用户（session 结束）")
 
 

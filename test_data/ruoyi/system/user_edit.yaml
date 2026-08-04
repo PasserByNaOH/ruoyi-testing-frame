@@ -36,6 +36,23 @@ test_cases:
         expected: 200
       - type: body_contains
         keyword: 操作成功
+    db_verify:
+      - desc: 昵称已更新
+        table: sys_user
+        column: nick_name
+        where: {user_id: "${get_runtime(created_user_id)}"}
+        expect: eq
+        value: 编辑后昵称
+      - desc: sys_user_role 剩1条
+        table: sys_user_role
+        where: {user_id: "${get_runtime(created_user_id)}"}
+        expect: count
+        value: 1
+      - desc: sys_user_post 剩1条
+        table: sys_user_post
+        where: {user_id: "${get_runtime(created_user_id)}"}
+        expect: count
+        value: 1
 
   # ═══════════════════════════════════════════════════════════
   # 唯一性冲突

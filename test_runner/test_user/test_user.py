@@ -13,7 +13,8 @@ import os
 import pytest
 
 from core.apiutil import ApiEngine
-from utils.readyaml import get_testcase_yaml, FILE_PATH
+from utils.assertions import run_db_verify
+from utils.readyaml import get_testcase_yaml, write_runtime, FILE_PATH
 from test_runner.test_user.helpers import create_user, get_user_id
 
 # ── 加载 YAML ─────────────────────────────────────────────────
@@ -47,9 +48,17 @@ _changeStatus_cases = get_testcase_yaml(
     _add_cases,
     ids=[c[1]["case_name"] for c in _add_cases],
 )
-def test_user_add(base_url, base_info, case):
+def test_user_add(base_url, db_connection, base_info, case):
     engine = ApiEngine()
     engine.specification_yaml(dict(base_info), dict(case))
+
+    db_rules = case.get("db_verify")
+    if db_rules:
+        # 新增没有前置 create_user，手动查 userId 写入 runtime
+        username = case["json"]["userName"]
+        user_id = get_user_id(base_url, username)
+        write_runtime({"created_user_id": user_id})
+        run_db_verify(db_connection, engine.replace_load(db_rules))
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -61,7 +70,7 @@ def test_user_add(base_url, base_info, case):
     _edit_cases,
     ids=[c[1]["case_name"] for c in _edit_cases],
 )
-def test_user_edit(base_url, base_info, case):
+def test_user_edit(base_url, db_connection, base_info, case):
     username = case["setup"]["create_user"]
     user_id = create_user(base_url, username)
 
@@ -73,6 +82,10 @@ def test_user_edit(base_url, base_info, case):
     engine = ApiEngine()
     engine.specification_yaml(dict(base_info), dict(case))
 
+    db_rules = case.get("db_verify")
+    if db_rules:
+        run_db_verify(db_connection, engine.replace_load(db_rules))
+
 
 # ═══════════════════════════════════════════════════════════════
 # DELETE /system/user/{id} — 删除用户（3 条）
@@ -83,7 +96,7 @@ def test_user_edit(base_url, base_info, case):
     _delete_cases,
     ids=[c[1]["case_name"] for c in _delete_cases],
 )
-def test_user_delete(base_url, base_info, case):
+def test_user_delete(base_url, db_connection, base_info, case):
     username = case.get("setup", {}).get("create_user")
     if username:
         user_id = create_user(base_url, username)
@@ -91,6 +104,10 @@ def test_user_delete(base_url, base_info, case):
 
     engine = ApiEngine()
     engine.specification_yaml(dict(base_info), dict(case))
+
+    db_rules = case.get("db_verify")
+    if db_rules:
+        run_db_verify(db_connection, engine.replace_load(db_rules))
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -102,7 +119,7 @@ def test_user_delete(base_url, base_info, case):
     _resetPwd_cases,
     ids=[c[1]["case_name"] for c in _resetPwd_cases],
 )
-def test_user_resetPwd(base_url, base_info, case):
+def test_user_resetPwd(base_url, db_connection, base_info, case):
     username = case.get("setup", {}).get("create_user")
     if username:
         user_id = create_user(base_url, username)
@@ -111,6 +128,10 @@ def test_user_resetPwd(base_url, base_info, case):
 
     engine = ApiEngine()
     engine.specification_yaml(dict(base_info), dict(case))
+
+    db_rules = case.get("db_verify")
+    if db_rules:
+        run_db_verify(db_connection, engine.replace_load(db_rules))
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -122,7 +143,7 @@ def test_user_resetPwd(base_url, base_info, case):
     _changeStatus_cases,
     ids=[c[1]["case_name"] for c in _changeStatus_cases],
 )
-def test_user_changeStatus(base_url, base_info, case):
+def test_user_changeStatus(base_url, db_connection, base_info, case):
     username = case.get("setup", {}).get("create_user")
     if username:
         user_id = create_user(base_url, username)
@@ -131,3 +152,7 @@ def test_user_changeStatus(base_url, base_info, case):
 
     engine = ApiEngine()
     engine.specification_yaml(dict(base_info), dict(case))
+
+    db_rules = case.get("db_verify")
+    if db_rules:
+        run_db_verify(db_connection, engine.replace_load(db_rules))

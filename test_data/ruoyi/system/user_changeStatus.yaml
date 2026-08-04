@@ -29,6 +29,13 @@ test_cases:
         expected: 200
       - type: body_contains
         keyword: 操作成功
+    db_verify:
+      - desc: 状态已停用
+        table: sys_user
+        column: status
+        where: {user_id: "${get_runtime(created_user_id)}"}
+        expect: eq
+        value: "1"
 
   - case_name: 启用用户
     setup:

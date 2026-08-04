@@ -34,6 +34,21 @@ test_cases:
         expected: 200
       - type: body_contains
         keyword: 操作成功
+    db_verify:
+      - desc: sys_user 有记录
+        table: sys_user
+        where: {user_name: at_add_01}
+        expect: exists
+      - desc: sys_user_role 有2条关联
+        table: sys_user_role
+        where: {user_id: "${get_runtime(created_user_id)}"}
+        expect: count
+        value: 2
+      - desc: sys_user_post 有2条关联
+        table: sys_user_post
+        where: {user_id: "${get_runtime(created_user_id)}"}
+        expect: count
+        value: 2
 
   # ═══════════════════════════════════════════════════════════
   # 唯一性冲突

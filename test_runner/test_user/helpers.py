@@ -5,7 +5,7 @@ test_user/helpers.py —— 用户管理测试可复用工具
 """
 
 import requests
-from utils.readyaml import get_runtime
+from utils.readyaml import get_runtime, write_runtime
 from utils.recordlog import logs
 
 
@@ -62,5 +62,6 @@ def create_user(base_url, username):
 
     # POST 不返回 userId，需要查询
     user_id = get_user_id(base_url, username)
+    write_runtime({"created_user_id": user_id})
     logs.info(f"前置用户已创建: {username} (userId={user_id})")
     return user_id

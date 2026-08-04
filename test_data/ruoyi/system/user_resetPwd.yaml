@@ -29,6 +29,12 @@ test_cases:
         expected: 200
       - type: body_contains
         keyword: 操作成功
+    db_verify:
+      - desc: 密码已加密
+        table: sys_user
+        column: password
+        where: {user_id: "${get_runtime(created_user_id)}"}
+        expect: not_empty
 
   # ═══════════════════════════════════════════════════════════
   # 无效等价类
