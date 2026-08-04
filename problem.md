@@ -165,3 +165,45 @@ else:
 ```
 
 关键认知：pymysql 的 `cursor.execute(sql, params)` 本质上是 Python 的 `%` 字符串格式化 + SQL 转义——**不是**真正的参数化查询（prepared statement）。因此 SQL 里任何 `%` 都要加倍写成 `%%` 或者走无参数通道。
+
+
+---
+
+# Phase 4 踩坑记录
+
+## 8. 角色删除是逻辑删除（非物理删除）
+
+**现象**：`test_role_delete[删除角色-正常]` → API 返回 200 "操作成功"，但 DB 验证 `SELECT COUNT(*) FROM sys_role WHERE role_id = ?` 返回 1（预期 0）。
+
+**原因**：`SysRoleMapper.xml` 的 `<delete id="deleteRoleById">` 标签内写的 SQL 是 `UPDATE sys_role SET del_flag = '2' WHERE role_id = ?`——和用户删除一样，是**逻辑删除**不是物理删除。role 记录还在，只是 `del_flag` 标记为 `'2'`。
+
+**修复**：DB 验证改用 `expect: eq` 验证 `del_flag = '2'`，和 `user_delete.yaml` 一致。
+
+---
+
+## 9. `login_as_user` 缓存 stale token
+
+**现象**：隔离测试第一次跑全过（11/11），第二次跑查询全挂（6 条全部 403 "没有权限"）。
+
+**原因**：`login_as_user()` 把用户 token 缓存到 `runtime.yaml["{username}_token"]`。第二次运行时 `clean_at_test_data` 清理旧角色 → `isolation_users` 重建（新 role_id），但 `login_as_user` 复用旧 token → 旧 role_id 的 `sys_role_menu` 已被删 → 权限为空 → 403。
+
+**修复**：放弃缓存。新增 `login_for_yaml()`——每次完整走 `/captchaImage` → Redis → `/login` 流程。
+
+---
+
+## 10. `cancelAuthUser` 没有 `checkRoleDataScope`
+
+**发现**：和 `selectAuthUserAll`（有 checkRoleDataScope）不同，`cancelAuthUser` 和 `cancelAuthUserAll` Controller 层未调 `checkRoleDataScope`。但 `@PreAuthorize("system:role:edit")` 在 Layer 1 拦截了大部分攻击——**漏洞仅在"用户有角色编辑菜单权限但 DataScope 受限"时暴露**。
+
+---
+
+## 11. YAML `auth_user` + `rows_in_scope` 集成
+
+**背景**：隔离测试需要切换用户身份。原有 `inject_token` 只读 `runtime.yaml["token"]`。
+
+**方案**：`specification_yaml` 新增 `auth_user` 字段 + `login_for_yaml`；`run_validations` 加 `**kwargs` 透传 `db` 给 `rows_in_scope` 断言。
+
+**变更**：
+- `assertions.py`：所有 validator 加 `**kwargs` + 新增 `assert_rows_in_scope`
+- `apiutil.py`：`specification_yaml` 新增 `db` + `redis_client` 参数 + `auth_user` 处理
+- 6 条查询隔离从 Python 转为 YAML（`role_scope_query.yaml`）

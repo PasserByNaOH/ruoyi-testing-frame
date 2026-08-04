@@ -2,7 +2,7 @@
 project: ruoyi-testing-frame
 description: 项目启动文档——每开新对话时首先阅读此文件
 last_updated: 2026-08-04
-current_phase: Phase 3 完成 → Phase 4 准备开始
+current_phase: Phase 4 Goal A 完成 → 准备 Goal B
 ---
 
 # 若依测试框架改造 · 项目启动文档
@@ -275,24 +275,61 @@ ruoyi-testing-frame/              ← GitHub 仓库根目录
 
 ### Phase 4 · 角色权限 + 二进制文件
 
-**目标 A**：跑通 ROLE-01~05（角色 CRUD + DataScope 隔离）  
-**目标 B**：跑通 EXPORT-01/02（二进制下载）+ Excel 导入
+**目标 A** ✅ 完成：角色 CRUD + DataScope 隔离（42 条用例）  
+**目标 B** 待开始：EXPORT-01/02（二进制下载）+ Excel 导入
+
+#### Goal A 实际实现
 
 ```
-新增/修改：
+新增：
   ├── test_data/ruoyi/system/
-  │     ├── role_*.yaml            → ROLE-01~05
-  │     ├── user_export.yaml       → EXPORT-01/02 导出
-  │     └── user_import.yaml       → Excel 导入（新增，手动未测）
-  ├── test_runner/test_role.py
-  ├── core/apiutil.py              → handle_file_upload() 实现
-  ├── utils/excelutil.py           → openpyxl 读取/断言（新建）
-  └── utils/assertions.py          → assert_excel_content() 实现
+  │     ├── role_add.yaml          →  8条（正常+唯一性+Bean校验）
+  │     ├── role_edit.yaml         →  8条（正常+唯一性+admin保护+Bean校验）
+  │     ├── role_delete.yaml       →  4条（正常+已分配+admin保护+不存在）
+  │     ├── role_changeStatus.yaml →  3条（正常+admin保护+不存在）
+  │     ├── role_dataScope.yaml    →  3条（正常+admin保护+不存在）
+  │     ├── role_authUser.yaml     →  5条（已分配/未分配/取消/批量授权/不存在）
+  │     └── role_scope_query.yaml  →  6条（5种DataScope + 跨部门隔离）
+  └── test_runner/test_role/
+        ├── conftest.py            → db_connection / clean_at_test_data / ensure_admin_login 
+        │                            / isolation_users fixture（5角色+7用户，session 级）
+        ├── helpers.py             → login_as_user / get_user_scope / assert_rows_in_scope
+        │                            / create_role / get_role_id / build_scope_user
+        ├── test_role_crud.py      → 6 参数化函数，31 条用例
+        └── test_role_scope.py     → YAML query(6) + Python write(3) + Python boundary(2)
+
+修改：
+  ├── core/apiutil.py              → specification_yaml() 新增 db + redis_client 参数
+  │                                 → 新增 login_for_yaml() — 每次新登录，不缓存
+  │                                 → specification_yaml 支持 auth_user 字段
+  └── utils/assertions.py          → 新增 rows_in_scope 断言（复用 DataScopeAspect SQL）
+                                    → run_validations 加 **kwargs 透传
 ```
 
-**对应手动案例**：D 笔记 ROLE-01~05 + C2 笔记 EXPORT-01/02 + 导入（补充）
+**42 条用例覆盖**：
+- 新增角色 8 条（ROLE-01/02 还原 + Bean 校验补充）
+- 编辑角色 8 条（新增：唯一性（编辑时排除自身）/ admin 保护 / Bean 校验）
+- 删除角色 4 条（ROLE-03 还原 + 正常删除 + admin 保护 + 不存在）
+- 状态修改 3 条（新增：手动未测）
+- DataScope 修改 3 条（新增：手动未测）
+- authUser 5 条（新增：手动未测，检查了 cancelAuthUser 安全漏洞）
+- 查询隔离 6 条（ROLE-05 还原 — 5 种 DataScope + 同角色跨部门）
+- 写隔离 3 条（新增：编辑/删除/重置密码 → 403 拦截）
+- DataScope 边界 2 条（新增：修改 CEO 角色 → 拦截 + cancelAuthUser 无 checkRoleDataScope）
 
-**工时**：10-12h
+**关键设计**：
+- `rows_in_scope` 断言：CSS 中 DataScopeAspect 的 5 条 SQL 规则文本，YAML 中只需指定 `username` 即可验证
+- `auth_user` 字段：YAML 中指定非 admin 身份，引擎自动登录注入 token
+- `login_for_yaml()`：每次新登录不缓存，消除 stale token 问题
+- `isolation_users` fixture：session 级预置 5 角色 + 7 用户，仅在 scope 测试中被引用
+- 角色删除是逻辑删除（`del_flag='2'`），非物理删除
+- `cancelAuthUser` 缺少 `checkRoleDataScope`——但 `@PreAuthorize` 在 Layer 1 先拦截了（安全漏洞需特定条件才暴露）
+
+**踩坑记录**：见 `problem.md`（§8 角色逻辑删除 / §9 stale token / §10 cancelAuthUser / §11 YAML auth_user 集成）
+
+**工时**：~12h
+
+**分支**：`feature/phase4-role-permission` → merged to master
 
 ---
 
@@ -318,10 +355,11 @@ Phase 0  ████████████████████ ✅ 100%  
 Phase 1  ████████████████████ ✅ 100%   SSH + conftest          4-6h
 Phase 2  ████████████████████ ✅ 100%  登录 15 案例              ~10h
 Phase 3  ████████████████████ ✅ 100%  用户 CRUD 25 案例        ~10h
-Phase 4  ░░░░░░░░░░░░░░░░░░░░   0%    角色权限 + 二进制        10-12h
+Phase 4  ██████████████░░░░░░ ✅ A   角色权限 42 案例            ~12h
+                                  B   二进制文件                ~4-6h
 Phase 5  ░░░░░░░░░░░░░░░░░░░░   0%    收尾                     3-4h
 ──────────────────────────────────────────────────────
-合计                                           33-42h（约 9-11 天）
+合计                                           45-54h（约 11-14 天）
 ```
 
 > **案例来源**：手动测试笔记 `C:\Users\PasserByNaOH\Desktop\实习学习笔记\笔记\Ruoyi\Vue\` 中的 ~35 条案例（B2 登录 / C1 用户管理 / D 角色管理 / C2 部门岗位 + 导出 / E 独立模块），框架目标是复现这些手动案例。
@@ -376,6 +414,11 @@ main ─────────────────────────
 21. **若依逻辑删除 `del_flag='2'`** — 删除接口走 `userMapper.deleteUserById` → SET del_flag='2'，user_name 唯一性仍然生效，因此每个测试用户必须有唯一用户名
 22. **MyBatis `<if>` 空字符串陷阱** — `updateUser` 的 `<if nickName != null and nickName != ''>` 会把空字符串跳过，导致 `nick_name` 列无默认值时 DB 报错（USER-03c）
 23. **YAML `${` + `{}` 流映射冲突** — `where: {user_id: "${get_runtime(...)}"}` 中 `${` 被 YAML 误解析，值必须用双引号包裹
+24. **`rows_in_scope` 断言** — 复用 DataScopeAspect 的 5 条 SQL 规则，在 YAML 中声明 `type: rows_in_scope` + `username: xxx` 即可验证用户查询隔离。计算逻辑移至 assertions.py，不依赖 test_role/helpers.py
+25. **`auth_user` YAML 字段** — `specification_yaml` 新增参数 `db` + `redis_client`，如果 case 中有 `auth_user` 字段则自动调 `login_for_yaml` 登录并将 token 注入 header。`inject_token` 检测到已有 Authorization → 跳过
+26. **`login_for_yaml()` — 不缓存策略** — 每次完整走 `/captchaImage` → Redis → `/login` 流程。隔离测试每次切换用户多 1 秒，但消除了 `login_as_user` 的 stale token 问题（旧 token 在角色重建后权限失效）
+27. **isolation_users fixture** — session 级、非 autouse，仅被 `test_role_scope.py` 请求时触发。定义在 conftest.py 中，数据定义用常量 `_ISOLATION_ROLES` / `_ISOLATION_USERS`；创建后写关键 ID 到 runtime.yaml 供 YAML 引用
+28. **角色管理端点安全审查** — `cancelAuthUser` / `cancelAuthUserAll` 缺少 `checkRoleDataScope`（对比 `selectAuthUserAll` 有）。当前被 `@PreAuthorize("system:role:edit")` 在 Layer 1 保护，漏洞仅在"用户有角色编辑菜单但 DataScope 受限"时暴露
 
 ---
 
@@ -521,3 +564,16 @@ main ─────────────────────────
 - **git commit + push 已执行**（5f01840，分支 feature/phase3-db-verify-v2 → master）
 - **project-startup.md 已同步**（更新 Phase 3 实现细节、设计决策、对话记录）
 - **文档可见化**：problem.md / project-startup.md / ruoyi-migration-summary.md 从 .gitignore 移除，已同步 GitHub
+
+### 2026-08-04 — Phase 4 Goal A 完成
+
+- **完整 gap 分析**：对比手动测试笔记（仅 ROLE-01~05，5条）与若依源码，发现漏测 edit/delete/changeStatus/dataScope/authUser 端点，DataScope 仅测了模式 3 和 5
+- **YAML 渐进式构建**：role_add → edit → delete → changeStatus → dataScope → authUser → scope_query，每写完一组立刻跑 pytest
+- **角色删除踩坑**：断言 `count=0` 失败 → 发现若依角色是逻辑删除（`del_flag='2'`）非物理删除（和用户一样）
+- **DataScope 隔离方案**：5 种模式 + 跨部门 + 写操作 + 安全边界共 11 条；isolation_users fixture 预置 5 角色 + 7 用户
+- **Token 缓存问题**：`login_as_user` 缓存旧 token → 角色重建后权限失效 → 全部 403。放弃缓存 → 新增 `login_for_yaml()` 每次新登录
+- **框架扩展**：`auth_user` YAML 字段 + `rows_in_scope` 断言 → 6 条查询隔离从 Python 转 YAML
+- **安全审查**：确认 `cancelAuthUser`/`cancelAuthUserAll` 缺少 `checkRoleDataScope`，但 `@PreAuthorize` 在 Layer 1 拦截；漏洞需特定条件才暴露
+- **42 条全部通过**，数据 `at_` 前缀自动清理
+- **git push 已执行**（ebc89a6，branch feature/phase4-role-permission → master）
+- **project-startup.md + problem.md 已同步**
