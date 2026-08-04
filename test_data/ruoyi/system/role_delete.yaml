@@ -1,0 +1,83 @@
+# ============================================================
+# 删除角色测试用例（4 条）
+# ============================================================
+# 前置：admin 已登录（ensure_admin_login fixture 写 token）
+# 清理：所有 at_% 角色/用户在 session 结束时由 clean_at_test_data 物理删除
+#
+# 注意：角色删除是逻辑删除（del_flag='2'），DB 验证用 eq 确认 del_flag
+# ============================================================
+
+base_info:
+  api_name: 删除角色
+  url: /system/role
+  method: delete
+  headers:
+    Content-Type: application/json;charset=UTF-8
+
+test_cases:
+  # ═══════════════════════════════════════════════════════════
+  # 有效等价类
+  # ═══════════════════════════════════════════════════════════
+
+  - case_name: 删除角色-正常
+    setup:
+      create_role:
+        role_name: at_删除正常角色
+        role_key: at_del_01
+    validations:
+      - type: status_code
+        expected: 200
+      - type: body_code
+        expected: 200
+      - type: body_contains
+        keyword: 操作成功
+    db_verify:
+      - desc: del_flag 为已删除
+        table: sys_role
+        column: del_flag
+        where: {role_id: "${get_runtime(created_role_id)}"}
+        expect: eq
+        value: "2"
+      - desc: sys_role_menu 已清空
+        table: sys_role_menu
+        where: {role_id: "${get_runtime(created_role_id)}"}
+        expect: count
+        value: 0
+
+  # ═══════════════════════════════════════════════════════════
+  # 业务规则
+  # ═══════════════════════════════════════════════════════════
+
+  - case_name: 删除-已分配用户的角色
+    setup:
+      create_role:
+        role_name: at_删除已分配角色
+        role_key: at_del_assigned
+        assign_user: true
+    validations:
+      - type: status_code
+        expected: 200
+      - type: body_code
+        expected: 500
+      - type: body_contains
+        keyword: 不能删除
+
+  - case_name: 删除-admin角色
+    url: /system/role/1
+    validations:
+      - type: status_code
+        expected: 200
+      - type: body_code
+        expected: 500
+      - type: body_contains
+        keyword: 不允许操作超级管理员角色
+
+  - case_name: 删除-不存在的角色
+    url: /system/role/99999
+    validations:
+      - type: status_code
+        expected: 200
+      - type: body_code
+        expected: 500
+      - type: body_not_contains
+        keyword: 操作成功

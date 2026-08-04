@@ -1,0 +1,68 @@
+# ============================================================
+# 修改角色状态测试用例（3 条）
+# ============================================================
+# 前置：admin 已登录（ensure_admin_login fixture 写 token）
+# 清理：所有 at_% 角色在 session 结束时由 clean_at_test_data 物理删除
+# ============================================================
+
+base_info:
+  api_name: 修改角色状态
+  url: /system/role/changeStatus
+  method: put
+  headers:
+    Content-Type: application/json;charset=UTF-8
+
+test_cases:
+  # ═══════════════════════════════════════════════════════════
+  # 有效等价类
+  # ═══════════════════════════════════════════════════════════
+
+  - case_name: 修改角色状态-正常
+    setup:
+      create_role:
+        role_name: at_修改状态
+        role_key: at_change_status
+    json:
+      status: "1"
+    validations:
+      - type: status_code
+        expected: 200
+      - type: body_code
+        expected: 200
+      - type: body_contains
+        keyword: 操作成功
+    db_verify:
+      - desc: status 已改为停用
+        table: sys_role
+        column: status
+        where: {role_id: "${get_runtime(created_role_id)}"}
+        expect: eq
+        value: "1"
+
+  # ═══════════════════════════════════════════════════════════
+  # 业务规则
+  # ═══════════════════════════════════════════════════════════
+
+  - case_name: 修改-admin角色状态
+    json:
+      roleId: 1
+      status: "1"
+    validations:
+      - type: status_code
+        expected: 200
+      - type: body_code
+        expected: 500
+      - type: body_contains
+        keyword: 不允许操作超级管理员角色
+
+  - case_name: 修改-不存在的角色状态
+    json:
+      roleId: 99999
+      status: "1"
+    validations:
+      - type: status_code
+        expected: 200
+      - type: body_code
+        expected: 500
+      - type: body_not_contains
+        keyword: 操作成功

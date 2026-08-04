@@ -1,0 +1,214 @@
+# ============================================================
+# 编辑角色测试用例（8 条）
+# ============================================================
+# 前置：admin 已登录（ensure_admin_login fixture 写 token）
+# 清理：所有 at_% 角色在 session 结束时由 clean_at_test_data 物理删除
+# setup.create_role 会自动调用 POST /system/role 创建前置角色
+# ============================================================
+
+base_info:
+  api_name: 编辑角色
+  url: /system/role
+  method: put
+  headers:
+    Content-Type: application/json;charset=UTF-8
+
+test_cases:
+  # ═══════════════════════════════════════════════════════════
+  # 有效等价类
+  # ═══════════════════════════════════════════════════════════
+
+  - case_name: 编辑角色-正常
+    setup:
+      create_role:
+        role_name: at_编辑正常角色
+        role_key: at_edit_01
+    json:
+      roleName: at_编辑正常角色_改
+      roleKey: at_edit_01_mod
+      roleSort: 20
+      status: "0"
+      dataScope: "1"
+      menuIds: []
+      deptIds: []
+    validations:
+      - type: status_code
+        expected: 200
+      - type: body_code
+        expected: 200
+      - type: body_contains
+        keyword: 操作成功
+    db_verify:
+      - desc: roleName 已更新
+        table: sys_role
+        column: role_name
+        where: {role_id: "${get_runtime(created_role_id)}"}
+        expect: eq
+        value: at_编辑正常角色_改
+      - desc: roleKey 已更新
+        table: sys_role
+        column: role_key
+        where: {role_id: "${get_runtime(created_role_id)}"}
+        expect: eq
+        value: at_edit_01_mod
+      - desc: roleSort 已更新
+        table: sys_role
+        column: role_sort
+        where: {role_id: "${get_runtime(created_role_id)}"}
+        expect: eq
+        value: "20"
+
+  # ═══════════════════════════════════════════════════════════
+  # 唯一性冲突（编辑时排除自身 roleId）
+  # ═══════════════════════════════════════════════════════════
+
+  - case_name: 编辑-角色名称重复
+    setup:
+      create_role:
+        role_name: at_编辑名称重复
+        role_key: at_edit_dup_name
+    json:
+      roleName: 普通角色
+      roleKey: at_edit_dup_name
+      roleSort: 10
+      status: "0"
+      dataScope: "1"
+      menuIds: []
+      deptIds: []
+    validations:
+      - type: status_code
+        expected: 200
+      - type: body_code
+        expected: 500
+      - type: body_contains
+        keyword: 角色名称已存在
+
+  - case_name: 编辑-角色权限字符重复
+    setup:
+      create_role:
+        role_name: at_编辑权限字符重复
+        role_key: at_edit_dup_key
+    json:
+      roleName: at_编辑权限字符重复
+      roleKey: common
+      roleSort: 10
+      status: "0"
+      dataScope: "1"
+      menuIds: []
+      deptIds: []
+    validations:
+      - type: status_code
+        expected: 200
+      - type: body_code
+        expected: 500
+      - type: body_contains
+        keyword: 角色权限已存在
+
+  # ═══════════════════════════════════════════════════════════
+  # 业务规则
+  # ═══════════════════════════════════════════════════════════
+
+  - case_name: 编辑-修改admin角色
+    json:
+      roleId: 1
+      roleName: 超级管理员
+      roleKey: admin
+      roleSort: 1
+      status: "0"
+      dataScope: "1"
+      menuIds: []
+      deptIds: []
+    validations:
+      - type: status_code
+        expected: 200
+      - type: body_code
+        expected: 500
+      - type: body_contains
+        keyword: 不允许操作超级管理员角色
+
+  # ═══════════════════════════════════════════════════════════
+  # Bean 校验 —— @NotBlank / @Size / @NotNull
+  # ═══════════════════════════════════════════════════════════
+
+  - case_name: 编辑-角色名称为空
+    setup:
+      create_role:
+        role_name: at_编辑名称为空
+        role_key: at_edit_empty_name
+    json:
+      roleName: ""
+      roleKey: at_edit_empty_name
+      roleSort: 10
+      status: "0"
+      dataScope: "1"
+      menuIds: []
+      deptIds: []
+    validations:
+      - type: status_code
+        expected: 200
+      - type: body_code
+        expected: 500
+      - type: body_not_contains
+        keyword: 操作成功
+
+  - case_name: 编辑-角色名称超长
+    setup:
+      create_role:
+        role_name: at_编辑名称超长
+        role_key: at_edit_long_name
+    json:
+      roleName: "1234567890123456789012345678901"
+      roleKey: at_edit_long_name
+      roleSort: 10
+      status: "0"
+      dataScope: "1"
+      menuIds: []
+      deptIds: []
+    validations:
+      - type: status_code
+        expected: 200
+      - type: body_code
+        expected: 500
+      - type: body_not_contains
+        keyword: 操作成功
+
+  - case_name: 编辑-角色权限字符为空
+    setup:
+      create_role:
+        role_name: at_编辑权限字符为空
+        role_key: at_edit_empty_key_bak
+    json:
+      roleName: at_编辑权限字符为空
+      roleKey: ""
+      roleSort: 10
+      status: "0"
+      dataScope: "1"
+      menuIds: []
+      deptIds: []
+    validations:
+      - type: status_code
+        expected: 200
+      - type: body_code
+        expected: 500
+      - type: body_not_contains
+        keyword: 操作成功
+
+  - case_name: 编辑-角色排序为空
+    setup:
+      create_role:
+        role_name: at_编辑排序为空
+        role_key: at_edit_null_sort
+    json:
+      roleName: at_编辑排序为空
+      roleKey: at_edit_null_sort
+      status: "0"
+      dataScope: "1"
+      menuIds: []
+      deptIds: []
+    validations:
+      - type: status_code
+        expected: 200
+      - type: body_code
+        expected: 500
+      - type: body_not_contains
+        keyword: 操作成功

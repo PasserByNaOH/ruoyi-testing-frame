@@ -4,6 +4,7 @@ import configparser
 from json.decoder import JSONDecodeError
 
 import jsonpath
+import requests
 
 from conf.setting import FILE_PATH, TOKEN_PREFIX
 from utils.assertions import run_validations
@@ -11,6 +12,43 @@ from utils.debugtalk import DebugTalk
 from utils.readyaml import get_runtime, write_runtime, clear_runtime
 from utils.recordlog import logs
 from utils.sendrequest import SendRequest
+
+
+def login_for_yaml(base_url, username, redis_client, password="123456"):
+    """
+    登录指定用户，返回 token。每次调用都是新登录，不缓存。
+    供 specification_yaml 的 auth_user 字段使用。
+    """
+    # 1. 获取验证码
+    captcha_resp = requests.get(
+        f"{base_url}/captchaImage",
+        headers={"Accept": "application/json"},
+        timeout=10,
+    ).json()
+    uuid = captcha_resp["uuid"]
+
+    # 2. Redis 取验证码答案
+    code = DebugTalk().get_captcha_code(uuid)
+    assert code is not None, f"[{username}] 验证码已过期，uuid={uuid}"
+
+    # 3. 登录
+    login_resp = requests.post(
+        f"{base_url}/login",
+        json={
+            "username": username,
+            "password": password,
+            "uuid": uuid,
+            "code": code,
+        },
+        headers={"Content-Type": "application/json;charset=UTF-8"},
+        timeout=10,
+    )
+    token = login_resp.json().get("token", "")
+    assert token, (
+        f"[{username}] 登录失败，未返回 token\n"
+        f"  响应: {login_resp.text}"
+    )
+    return token
 
 
 class ApiEngine:
@@ -61,11 +99,23 @@ class ApiEngine:
     # 引擎主循环
     # ═══════════════════════════════════════════════════════════
 
-    def specification_yaml(self, base_info, test_case):
+    def specification_yaml(self, base_info, test_case,
+                           db=None, redis_client=None):
         """
         执行一条 YAML 用例：
         拼 URL → 替换变量 → 调 sendrequest → 提取数据 → 断言。
+
+        db:            ConnectMysql 实例，传给 rows_in_scope 等断言
+        redis_client:  Redis 客户端，auth_user 登录时用于查验证码
         """
+        # 0. 如果指定了 auth_user，先登录拿 token
+        auth_user = test_case.pop("auth_user", None)
+        if auth_user and redis_client:
+            token = login_for_yaml(self.host, auth_user, redis_client)
+            test_case.setdefault("headers", {})
+            test_case["headers"]["Authorization"] = f"Bearer {token}"
+            logs.info(f"用例将以 [{auth_user}] 身份执行")
+
         # 1. 基本信息（用例可选覆盖 url / method / headers）
         url = self.host + (test_case.pop("url", None) or base_info["url"])
         method = test_case.pop("method", None) or base_info["method"]
@@ -105,7 +155,7 @@ class ApiEngine:
                 if extract_rules:
                     self.extract_data(extract_rules, resp.text)
                 # 执行断言
-                run_validations(resp, validations)
+                run_validations(resp, validations, db=db)
             except JSONDecodeError:
                 logs.error("响应 JSON 解析失败")
                 raise
@@ -117,7 +167,7 @@ class ApiEngine:
 
         else:
             logs.warning(f"未知 Content-Type: {content_type}，按 JSON 处理")
-            run_validations(resp, validations)
+            run_validations(resp, validations, db=db)
 
         return resp
 

@@ -1,0 +1,117 @@
+# ============================================================
+# DataScope 查询隔离测试用例（6 条）
+# ============================================================
+# 前置：isolation_users fixture 预置 5 角色 + 7 用户
+# auth_user 字段：引擎自动以指定用户登录，注入其 token
+# rows_in_scope 断言：逐行验证返回数据的部门 ID 在权限范围内
+# ============================================================
+
+base_info:
+  api_name: DataScope 查询隔离
+  url: /system/user/list
+  method: get
+  headers:
+    Content-Type: application/json;charset=UTF-8
+
+test_cases:
+  # ═══════════════════════════════════════════════════════════
+  # data_scope=1 — 全部
+  # ═══════════════════════════════════════════════════════════
+
+  - case_name: scope查询-dataScope1全部
+    auth_user: at_ceo_user
+    params:
+      pageNum: 1
+      pageSize: 100
+    validations:
+      - type: status_code
+        expected: 200
+      - type: body_code
+        expected: 200
+      - type: rows_in_scope
+        username: at_ceo_user
+
+  # ═══════════════════════════════════════════════════════════
+  # data_scope=2 — 自定义（dept=[103,105]）
+  # ═══════════════════════════════════════════════════════════
+
+  - case_name: scope查询-dataScope2自定义
+    auth_user: at_custom_user
+    params:
+      pageNum: 1
+      pageSize: 100
+    validations:
+      - type: status_code
+        expected: 200
+      - type: body_code
+        expected: 200
+      - type: rows_in_scope
+        username: at_custom_user
+
+  # ═══════════════════════════════════════════════════════════
+  # data_scope=3 — 本部门
+  # ═══════════════════════════════════════════════════════════
+
+  - case_name: scope查询-dataScope3本部门
+    auth_user: at_mgr_103
+    params:
+      pageNum: 1
+      pageSize: 100
+    validations:
+      - type: status_code
+        expected: 200
+      - type: body_code
+        expected: 200
+      - type: rows_in_scope
+        username: at_mgr_103
+
+  # ═══════════════════════════════════════════════════════════
+  # data_scope=4 — 本部门及以下
+  # ═══════════════════════════════════════════════════════════
+
+  - case_name: scope查询-dataScope4本部门及以下
+    auth_user: at_mgr_child_103
+    params:
+      pageNum: 1
+      pageSize: 100
+    validations:
+      - type: status_code
+        expected: 200
+      - type: body_code
+        expected: 200
+      - type: rows_in_scope
+        username: at_mgr_child_103
+
+  # ═══════════════════════════════════════════════════════════
+  # data_scope=5 — 仅本人
+  # ═══════════════════════════════════════════════════════════
+
+  - case_name: scope查询-dataScope5仅本人
+    auth_user: at_emp_103
+    params:
+      pageNum: 1
+      pageSize: 100
+    validations:
+      - type: status_code
+        expected: 200
+      - type: body_code
+        expected: 200
+      - type: rows_in_scope
+        username: at_emp_103
+
+  # ═══════════════════════════════════════════════════════════
+  # 同角色不同部门 — mgr_106 (data_scope=3, dept=106)
+  # ═══════════════════════════════════════════════════════════
+
+  - case_name: scope查询-同角色跨部门
+    auth_user: at_mgr_106
+    params:
+      pageNum: 1
+      pageSize: 100
+    validations:
+      - type: status_code
+        expected: 200
+      - type: body_code
+        expected: 200
+      - type: rows_in_scope
+        username: at_mgr_106

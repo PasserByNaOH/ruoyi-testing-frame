@@ -1,0 +1,136 @@
+# ============================================================
+# 角色分配用户 / 取消授权测试用例（5 条）
+# ============================================================
+# 前置：admin 已登录（ensure_admin_login fixture 写 token）
+# 清理：所有 at_% 角色/用户在 session 结束时由 clean_at_test_data 物理删除
+#
+# 安全漏洞标记：
+#   cancelAuthUser / cancelAuthUserAll 缺少 checkRoleDataScope 调用
+#   → 该漏洞验证在 DataScope 隔离测试（test_role_scope.py）中执行
+# ============================================================
+
+base_info:
+  api_name: 角色分配用户
+  url: /system/role
+  method: get
+  headers:
+    Content-Type: application/json;charset=UTF-8
+
+test_cases:
+  # ═══════════════════════════════════════════════════════════
+  # GET /system/role/authUser/allocatedList — 查已分配用户
+  # ═══════════════════════════════════════════════════════════
+
+  - case_name: 查询角色已分配用户-正常
+    url: /system/role/authUser/allocatedList
+    method: get
+    setup:
+      create_role:
+        role_name: at_已分配用户查询
+        role_key: at_alloc_query
+        assign_user: at_alloc_query_user
+    params:
+      roleId: "${get_runtime(created_role_id)}"
+      pageNum: 1
+      pageSize: 10
+    validations:
+      - type: status_code
+        expected: 200
+      - type: body_code
+        expected: 200
+    db_verify:
+      - desc: 查询结果包含被分配用户
+        table: sys_user_role
+        where: {role_id: "${get_runtime(created_role_id)}", user_id: "${get_runtime(assigned_user_id)}"}
+        expect: exists
+
+  # ═══════════════════════════════════════════════════════════
+  # GET /system/role/authUser/unallocatedList — 查未分配用户
+  # ═══════════════════════════════════════════════════════════
+
+  - case_name: 查询角色未分配用户
+    url: /system/role/authUser/unallocatedList
+    method: get
+    params:
+      roleId: 2
+      pageNum: 1
+      pageSize: 10
+    validations:
+      - type: status_code
+        expected: 200
+      - type: body_code
+        expected: 200
+
+  # ═══════════════════════════════════════════════════════════
+  # PUT /system/role/authUser/cancel — 单个取消授权
+  # ═══════════════════════════════════════════════════════════
+
+  - case_name: 取消授权-正常
+    url: /system/role/authUser/cancel
+    method: put
+    setup:
+      create_role:
+        role_name: at_取消授权测试
+        role_key: at_cancel_auth
+        assign_user: at_cancel_auth_user
+    json:
+      roleId: "${get_runtime(created_role_id)}"
+      userId: "${get_runtime(assigned_user_id)}"
+    validations:
+      - type: status_code
+        expected: 200
+      - type: body_code
+        expected: 200
+      - type: body_contains
+        keyword: 操作成功
+    db_verify:
+      - desc: sys_user_role 关联已删除
+        table: sys_user_role
+        where: {user_id: "${get_runtime(assigned_user_id)}", role_id: "${get_runtime(created_role_id)}"}
+        expect: count
+        value: 0
+
+  # ═══════════════════════════════════════════════════════════
+  # PUT /system/role/authUser/selectAll — 批量授权
+  # ═══════════════════════════════════════════════════════════
+
+  - case_name: 批量授权-正常
+    url: /system/role/authUser/selectAll
+    method: put
+    setup:
+      create_role:
+        role_name: at_批量授权测试
+        role_key: at_select_all_auth
+    params:
+      roleId: "${get_runtime(created_role_id)}"
+      userIds: 2
+    validations:
+      - type: status_code
+        expected: 200
+      - type: body_code
+        expected: 200
+      - type: body_contains
+        keyword: 操作成功
+    db_verify:
+      - desc: sys_user_role 授权写入成功
+        table: sys_user_role
+        where: {role_id: "${get_runtime(created_role_id)}", user_id: 2}
+        expect: exists
+
+  # ═══════════════════════════════════════════════════════════
+  # 取消授权-角色不存在
+  # ═══════════════════════════════════════════════════════════
+
+  - case_name: 取消授权-角色不存在
+    url: /system/role/authUser/cancel
+    method: put
+    json:
+      roleId: 99999
+      userId: 2
+    validations:
+      - type: status_code
+        expected: 200
+      - type: body_code
+        expected: 500
+      - type: body_not_contains
+        keyword: 操作成功

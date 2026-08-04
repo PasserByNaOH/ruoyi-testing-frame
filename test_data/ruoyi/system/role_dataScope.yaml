@@ -1,0 +1,75 @@
+# ============================================================
+# 修改角色数据权限测试用例（3 条）
+# ============================================================
+# 前置：admin 已登录（ensure_admin_login fixture 写 token）
+# 清理：所有 at_% 角色在 session 结束时由 clean_at_test_data 物理删除
+# ============================================================
+
+base_info:
+  api_name: 修改角色数据权限
+  url: /system/role/dataScope
+  method: put
+  headers:
+    Content-Type: application/json;charset=UTF-8
+
+test_cases:
+  # ═══════════════════════════════════════════════════════════
+  # 有效等价类 — dataScope 从 1（全部）改为 2（自定义）
+  # ═══════════════════════════════════════════════════════════
+
+  - case_name: 修改数据权限-正常
+    setup:
+      create_role:
+        role_name: at_修改数据权限
+        role_key: at_data_scope
+    json:
+      dataScope: "2"
+      deptIds: [103]
+    validations:
+      - type: status_code
+        expected: 200
+      - type: body_code
+        expected: 200
+      - type: body_contains
+        keyword: 操作成功
+    db_verify:
+      - desc: dataScope 已更新为自定义
+        table: sys_role
+        column: data_scope
+        where: {role_id: "${get_runtime(created_role_id)}"}
+        expect: eq
+        value: "2"
+      - desc: sys_role_dept 写入部门关联
+        table: sys_role_dept
+        where: {role_id: "${get_runtime(created_role_id)}"}
+        expect: exists
+
+  # ═══════════════════════════════════════════════════════════
+  # 业务规则
+  # ═══════════════════════════════════════════════════════════
+
+  - case_name: 修改-admin角色数据权限
+    json:
+      roleId: 1
+      dataScope: "2"
+      deptIds: []
+    validations:
+      - type: status_code
+        expected: 200
+      - type: body_code
+        expected: 500
+      - type: body_contains
+        keyword: 不允许操作超级管理员角色
+
+  - case_name: 修改-不存在角色的数据权限
+    json:
+      roleId: 99999
+      dataScope: "1"
+      deptIds: []
+    validations:
+      - type: status_code
+        expected: 200
+      - type: body_code
+        expected: 200
+      - type: body_contains
+        keyword: 操作成功

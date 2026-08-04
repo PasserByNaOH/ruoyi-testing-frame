@@ -4,7 +4,7 @@ from utils.recordlog import logs
 # HTTP 断言
 # ═══════════════════════════════════════════════════════════
 
-def assert_status_code(resp, rule):
+def assert_status_code(resp, rule, **kwargs):
      """断言 HTTP 状态码。"""
      assert resp.status_code == rule["expected"], (
           f"HTTP 状态码断言失败\n"
@@ -12,7 +12,7 @@ def assert_status_code(resp, rule):
           f"  实际: {resp.status_code}"
      )
 
-def assert_body_code(resp, rule):
+def assert_body_code(resp, rule, **kwargs):
      """断言若依业务状态码（body.code）。"""
      actual = resp.json()
      assert actual.get("code") == rule["expected"], (
@@ -22,7 +22,7 @@ def assert_body_code(resp, rule):
      )
 
 
-def assert_body_contains(resp, rule):
+def assert_body_contains(resp, rule, **kwargs):
      """断言响应体包含指定关键字（查整个 JSON 字符串）。"""
      body_text = resp.text
      assert rule["keyword"] in body_text, (
@@ -32,7 +32,7 @@ def assert_body_contains(resp, rule):
      )
 
 
-def assert_body_not_contains(resp, rule):
+def assert_body_not_contains(resp, rule, **kwargs):
      """断言响应体不包含指定关键字（查整个 JSON 字符串）。"""
      body_text = resp.text
      assert rule["keyword"] not in body_text, (
@@ -42,44 +42,126 @@ def assert_body_not_contains(resp, rule):
      )
 
 
-def assert_token_not_empty(resp, rule):
+def assert_token_not_empty(resp, rule, **kwargs):
      """断言响应中包含非空 token。"""
      token = resp.json().get("token", "")
      assert token != "", "登录成功但未返回 token"
 
 
-def assert_token_absent(resp, rule):
+def assert_token_absent(resp, rule, **kwargs):
      """断言响应中不包含 token（失败登录场景）。"""
      assert "token" not in resp.json(), (
           f"失败登录不应返回 token，实际返回: {resp.json().get('token')}"
      )
 
 #   验证导出的二进制文件内容是否和数据库的数据相同
-def assert_excel_content(resp, rule):
+def assert_excel_content(resp, rule, **kwargs):
      pass
+
+
+# ═══════════════════════════════════════════════════════════
+# DataScope 断言（依赖 db）
+# ═══════════════════════════════════════════════════════════
+
+def assert_rows_in_scope(resp, rule, db=None, **kwargs):
+    """
+    断言响应 body.rows 中每一行都在指定用户的 DataScope 范围内。
+
+    规则参数:
+        username:   str  — 以该用户的 DataScope 为基准
+        dept_field: str  — rows 中部门 ID 的字段名（默认 "deptId"）
+        user_field: str  — rows 中用户 ID 的字段名（默认 "userId"）
+    """
+    assert db is not None, "rows_in_scope 需要 db 参数（specification_yaml 传入）"
+
+    body = resp.json()
+    rows = body.get("rows", [])
+    username = rule["username"]
+    dept_field = rule.get("dept_field", "deptId")
+    user_field = rule.get("user_field", "userId")
+
+    # ── 复用 DataScopeAspect 逻辑：计算用户的允许部门集合 ──
+    user_recs = db.query(
+        "SELECT user_id, dept_id FROM sys_user WHERE user_name = %s", [username])
+    assert user_recs, f"用户不存在: {username}"
+    user_id = user_recs[0]["user_id"]
+    dept_id = user_recs[0]["dept_id"]
+
+    roles = db.query(
+        "SELECT r.role_id, r.data_scope FROM sys_role r "
+        "JOIN sys_user_role ur ON r.role_id = ur.role_id "
+        "WHERE ur.user_id = %s AND r.status = '0' AND r.del_flag = '0'", [user_id])
+
+    allowed_dept_ids = set()
+    is_self_only = False
+
+    for role in roles:
+        ds = role["data_scope"]
+        if ds == "1":          # 全部数据权限 → 不限
+            return
+        elif ds == "2":         # 自定义 → sys_role_dept 查关联部门
+            depts = db.query(
+                "SELECT dept_id FROM sys_role_dept WHERE role_id = %s",
+                [role["role_id"]])
+            allowed_dept_ids.update(d["dept_id"] for d in depts)
+        elif ds == "3":         # 本部门
+            allowed_dept_ids.add(dept_id)
+        elif ds == "4":         # 本部门及以下
+            subs = db.query(
+                "SELECT dept_id FROM sys_dept "
+                "WHERE dept_id = %s OR FIND_IN_SET(%s, ancestors)",
+                [dept_id, dept_id])
+            allowed_dept_ids.update(d["dept_id"] for d in subs)
+        elif ds == "5":         # 仅本人
+            is_self_only = True
+
+    # ── 逐行验证 ──
+    if is_self_only and not allowed_dept_ids:
+        assert len(rows) <= 1, (
+            f"rows_in_scope 失败 [{username}]：仅本人权限但返回了 {len(rows)} 条\n"
+            f"  userIds: {[r.get(user_field) for r in rows]}"
+        )
+        if rows:
+            assert rows[0].get(user_field) == user_id, (
+                f"rows_in_scope 失败 [{username}]：仅本人权限但返回了其他用户\n"
+                f"  预期 userId={user_id}\n"
+                f"  实际 userId={rows[0].get(user_field)}"
+            )
+
+    elif allowed_dept_ids:
+        for row in rows:
+            actual_dept = row.get(dept_field)
+            assert actual_dept in allowed_dept_ids, (
+                f"rows_in_scope 失败 [{username}]："
+                f"{dept_field}={actual_dept} 不在 {sorted(allowed_dept_ids)} 内"
+            )
+
 
 # type 字符串 → 断言函数的映射表
 VALIDATORS = {
-     "status_code":     assert_status_code,
-     "body_code":       assert_body_code,
-     "body_contains":   assert_body_contains,
+     "status_code":       assert_status_code,
+     "body_code":         assert_body_code,
+     "body_contains":     assert_body_contains,
      "body_not_contains": assert_body_not_contains,
-     "token_not_empty": assert_token_not_empty,
-     "token_absent":    assert_token_absent,
-     "excel_content":    assert_excel_content,
+     "token_not_empty":   assert_token_not_empty,
+     "token_absent":      assert_token_absent,
+     "excel_content":     assert_excel_content,
+     "rows_in_scope":     assert_rows_in_scope,
 }
 
-def run_validations(resp, validations):
+def run_validations(resp, validations, **kwargs):
      """
      遍历验证规则列表，逐个执行断言。
      加新断言类型：写一个 assert_xxx 函数 → 在 VALIDATORS 里加一行即可。
+
+     kwargs 透传给断言函数（例如 db=xxx 给 rows_in_scope）。
      """
      for rule in validations:
           validate_type = rule["type"]
           validate_func = VALIDATORS.get(validate_type)
           if validate_func is None:
                raise ValueError(f"不支持的断言类型: {validate_type}")
-          validate_func(resp, rule)
+          validate_func(resp, rule, **kwargs)
           logs.info(f"断言通过: {validate_type}")
 
 
