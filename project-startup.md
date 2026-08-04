@@ -1,8 +1,8 @@
 ---
 project: ruoyi-testing-frame
 description: 项目启动文档——每开新对话时首先阅读此文件
-last_updated: 2026-08-02
-current_phase: Phase 2 完成 → Phase 3 准备开始
+last_updated: 2026-08-04
+current_phase: Phase 3 完成 → Phase 4 准备开始
 ---
 
 # 若依测试框架改造 · 项目启动文档
@@ -217,25 +217,59 @@ ruoyi-testing-frame/              ← GitHub 仓库根目录
 
 ---
 
-### Phase 3 · 用户管理 CRUD
+### Phase 3 · 用户管理 CRUD ✅ 完成
 
-**目标**：跑通 USER-01~06 + 前后端校验不一致案例
+**目标**：跑通 25 条用户管理用例（5 端点：add/edit/delete/resetPwd/changeStatus），含 HTTP 断言 + DB 验证
 
+**实际实现**：
 ```
-新增/修改：
-  ├── test_data/ruoyi/system/
-  │     ├── user_add.yaml          → USER-01/02a/02b/02c
-  │     ├── user_edit.yaml         → USER-04/04a/04b/04c
-  │     ├── user_delete.yaml       → USER-05
-  │     ├── user_resetPwd.yaml     → USER-06
-  │     └── user_validate_gap.yaml → USER-03a/03b/03c/03d 前后端校验差异
-  ├── test_runner/test_user.py     → 参数化执行器
-  └── utils/assertions.py          → 补充 body_not_contains 等断言
+新增：
+  ├── test_runner/test_user/
+  │     ├── conftest.py            → db_connection（ConnectMysql + autocommit=True）
+  │     │                            clean_at_users（session 级，物理删除 at_% 残留）
+  │     │                            ensure_admin_login（session autouse，admin 自动登录）
+  │     ├── helpers.py             → create_user() / get_user_id() 可复用工具
+  │     └── test_user.py           → 5 参数化函数，25 条用例
+  └── test_data/ruoyi/system/
+        ├── user_add.yaml          → 11 条（正常+唯一性+Bean校验+前后端缺口）
+        ├── user_edit.yaml         →  4 条（正常+用户名/手机/邮箱重复）
+        ├── user_delete.yaml       →  3 条（正常+删自己+删不存在）
+        ├── user_resetPwd.yaml     →  3 条（正常+重置admin+不存在用户）
+        └── user_changeStatus.yaml →  4 条（停用+启用+停用admin + db_verify）
+
+修改：
+  ├── utils/connection.py          → ConnectMysql: autocommit=True, params 支持,
+  │                                   utf8mb4 charset, 可选构造参数
+  ├── utils/assertions.py          → 新增 run_db_verify() + coerce_db_param()
+  │                                   (声明式 DB 验证：exists/count/eq/not_empty)
+  └── conftest.py（根目录）         → 提升 base_url + redis_client 为 session fixture
 ```
 
-**对应手动案例**：C1 笔记中的 USER-01~06 全覆盖（含无效等价类）
+**25 条用例覆盖 5 端点**：
+- POST /system/user — 11 条（USER-01 正常 / 02a-c 唯一性 / 02d-f Bean 校验 / 03a-d 前后端缺口）
+- PUT /system/user — 4 条（正常编辑 / 用户名/手机/邮箱重复）
+- DELETE /system/user/{id} — 3 条（正常删除 / 删自己 / 删不存在）
+- PUT /system/user/resetPwd — 3 条（正常重置 / 重置 admin / 不存在用户）
+- PUT /system/user/changeStatus — 4 条（停用 / 启用 / 停用admin）
 
-**工时**：8-10h
+**DB 验证覆盖 5 个正常用例**：
+- add: sys_user exists + role/post 关联 count=2
+- edit: nick_name 更新 + role/post 关联 count=1
+- delete: del_flag='2' + role/post 清空
+- resetPwd: password 非空
+- changeStatus: status='1'
+
+**关键设计**：
+- `run_db_verify` 声明式 DB 断言（table/where/expect/value），SQL 参数化防注入
+- `coerce_db_param` 修复 `${}` 替换导致的 str/int 类型不匹配（`"191"` → `191`）
+- `create_user()` 自动写入 `created_user_id` 到 runtime.yaml，供 `db_verify` 的 `where` 用
+- 每用例独立前置用户（`setup.create_user`），session 结束时物理删除三表残留
+
+**踩坑记录**：见 `problem.md`（§6 REPEATABLE READ 快照 + §7 `%` 格式符问题 + §3 空昵称 MyBatis 动态 SQL + §3 YAML `${` + `{}` 嵌套冲突）
+
+**工时**：~10h（含 DB 验证专项排查 ~3h）
+
+**分支**：`feature/phase3-db-verify-v2` → merged to master（commit `5f01840`）
 
 ---
 
@@ -283,7 +317,7 @@ ruoyi-testing-frame/              ← GitHub 仓库根目录
 Phase 0  ████████████████████ ✅ 100%  完成
 Phase 1  ████████████████████ ✅ 100%   SSH + conftest          4-6h
 Phase 2  ████████████████████ ✅ 100%  登录 15 案例              ~10h
-Phase 3  ░░░░░░░░░░░░░░░░░░░░   0%    用户 CRUD                8-10h
+Phase 3  ████████████████████ ✅ 100%  用户 CRUD 25 案例        ~10h
 Phase 4  ░░░░░░░░░░░░░░░░░░░░   0%    角色权限 + 二进制        10-12h
 Phase 5  ░░░░░░░░░░░░░░░░░░░░   0%    收尾                     3-4h
 ──────────────────────────────────────────────────────
@@ -334,6 +368,14 @@ main ─────────────────────────
 13. **conftest.py 放根目录** — session 级 fixture 全项目共享，子目录测试自动继承；Phase 1 只放 SSH 隧道，redis_client/db_connection 等业务 fixture 在后续 Phase 按需追加（需求驱动，不预写）
 14. **SSH 隧道单连接双转发** — 一条 SSH 连接用 `remote_bind_addresses` 同时转发 Redis 6379 + MySQL 3306，yield 字典 `{"tunnel", "redis_port", "mysql_port"}` 提高可读性
 15. **paramiko 版本锁定 `<3.0`** — paramiko 3.x 移除 DSSKey，sshtunnel 不兼容；pymysql charset 用 `utf8mb4` 而非 `utf-8`
+16. **ConnectMysql autocommit=True** — 避免 MySQL REPEATABLE READ 导致 DB 验证读到旧快照。每条 SQL 独立事务，API 提交后立即可见
+17. **ConnectMysql.query/execute 参数化** — 无参数时不传第二参（避免 `%` 被 pymysql 当格式符），有参数时传 params 防 SQL 注入
+18. **声明式 DB 验证** — `run_db_verify(rules)` 支持 exists/count/eq/not_empty 四种 expect，在 YAML 的 `db_verify` 块声明，不写 SQL
+19. **created_user_id 写入 runtime** — `create_user()` 自动把查到的 userId 写入 runtime.yaml，供 `db_verify` 的 `where` 用 `${get_runtime(created_user_id)}` 引用
+20. **每用例独立用户 + 物理删除** — `setup.create_user` 为每条用例创建独立前置用户；session 结束时 `clean_at_users` 物理删除三表残留（子表→主表），保证可重复运行
+21. **若依逻辑删除 `del_flag='2'`** — 删除接口走 `userMapper.deleteUserById` → SET del_flag='2'，user_name 唯一性仍然生效，因此每个测试用户必须有唯一用户名
+22. **MyBatis `<if>` 空字符串陷阱** — `updateUser` 的 `<if nickName != null and nickName != ''>` 会把空字符串跳过，导致 `nick_name` 列无默认值时 DB 报错（USER-03c）
+23. **YAML `${` + `{}` 流映射冲突** — `where: {user_id: "${get_runtime(...)}"}` 中 `${` 被 YAML 误解析，值必须用双引号包裹
 
 ---
 
@@ -371,6 +413,9 @@ main ─────────────────────────
 | 若依服务器 502 | Java 进程被 OOM Killer 杀掉（1.6G 服务器，Xmx 1024m） | `java -Xmx256m -Xms128m -jar ruoyi-admin.jar` 重启 |
 | `AttributeError: module 'paramiko' has no attribute 'DSSKey'` | paramiko 3.x 移除 DSSKey，sshtunnel 不兼容 | `pip install "paramiko<3.0"` |
 | `'NoneType' object has no attribute 'encoding'` | pymysql `charset="utf-8"` 格式不对 | 改用 `charset="utf8mb4"`（无横线） |
+| `TypeError: not enough arguments for format string` | `cursor.execute(sql, ())` 空tuple导致SQL中`%`被当格式符 | 无参数时不传第二参：`if params: cursor.execute(sql, params) else: cursor.execute(sql)` |
+| DB 验证查询不到更新后的数据 | `autocommit=False` + REPEATABLE READ 快照 | `pymysql.connect(..., autocommit=True)` |
+| YAML `where: {user_id: ${...}}` 解析报错 | `${` 在 YAML 流映射 `{}` 中触发解析歧义 | 值用双引号包裹：`"${get_runtime(created_user_id)}"` |
 
 ### 6.5 Phase 切换约定
 
@@ -460,3 +505,19 @@ main ─────────────────────────
 - **15 条用例全部通过**，2 个 paramiko/CryptographyDeprecationWarning 与代码无关
 - **git commit + push 已执行**（2de9f1c）
 - **用户偏好记录**：conda 环境 `testframe`，测试手动执行不自动跑
+
+### 2026-08-03~04 — Phase 3 完成
+
+- **用例扩展**：通过分析手动测试笔记 + 若依源码，从原计划 ~12 条扩展到 25 条（覆盖 5 端点 + Bean 校验 + 前后端缺口 + 唯一性冲突）
+- **Layer 分离**：根 conftest = 基础设施（base_url/redis_client/ssh_tunnel），test_user/conftest = 用户模块专属（db_connection/clean_at_users/ensure_admin_login）
+- **每用例独立前置用户**：`setup.create_user` + 物理删除三表残留，保证可重复运行
+- **空昵称踩坑**：MyBatis `<if nickName != null and nickName != ''>` 跳过空字符串 → `nick_name` 无默认值 → DB error（修改断言为 code=500）
+- **YAML `${` 流映射冲突**：`where: {user_id: "${get_runtime(...)}"}` 需要双引号包裹，否则 YAML 解析器报错
+- **DB 验证方案设计**：声明式 `run_db_verify`（exists/count/eq/not_empty），SQL 参数化在 connection 层封装，YAML 用 `db_verify` 块声明
+- **`coerce_db_param` 类型还原**：`replace_load` 的 `${}` 替换后 int 变 str（`191` → `"191"`），需在 DB 验证前还原
+- **DB 验证专项排查（~3h）**：debug_edit.py 验证 API 正常 → 定位 REPEATABLE READ 快照 → autocommit=True 修复 → `%` 格式符问题修复
+- **MySQL 事务隔离学习**：READ UNCOMMITTED / READ COMMITTED / REPEATABLE READ / SERIALIZABLE 四级对比，抢票场景的行锁（FOR UPDATE）
+- **所有 25 条用例全部通过**（HTTP 断言 + DB 验证）
+- **git commit + push 已执行**（5f01840，分支 feature/phase3-db-verify-v2 → master）
+- **project-startup.md 已同步**（更新 Phase 3 实现细节、设计决策、对话记录）
+- **文档可见化**：problem.md / project-startup.md / ruoyi-migration-summary.md 从 .gitignore 移除，已同步 GitHub
