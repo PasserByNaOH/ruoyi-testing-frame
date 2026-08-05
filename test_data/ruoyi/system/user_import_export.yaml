@@ -1,0 +1,98 @@
+# 用户导入导出业务流程测试
+# 流程：创建 Excel → 导入 → DB 验证 → 导出 → 结构校验 → Python 侧做内容比对
+
+base_info:
+  api_name: "用户导入导出"
+  import_url: "/system/user/importData"
+  export_url: "/system/user/export"
+  method: "post"
+  headers:
+    Content-Type: "application/json;charset=UTF-8"
+
+test_cases:
+  - case_name: "导入导出-批量导入2个用户并验证导出"
+
+    # ═══════════════════════════════════════════════════════════
+    # 阶段一：导入
+    # ═══════════════════════════════════════════════════════════
+    import:
+      updateSupport: false
+      rows:
+        - 部门编号: 103
+          登录名称: "at_imex_01"
+          用户名称: "导入导出测试1"
+          用户邮箱: "imex1@test.com"
+          手机号码: "13800000001"
+          用户性别: "男"
+          账号状态: "正常"
+        - 部门编号: 103
+          登录名称: "at_imex_02"
+          用户名称: "导入导出测试2"
+          用户邮箱: "imex2@test.com"
+          手机号码: "13800000002"
+          用户性别: "女"
+          账号状态: "正常"
+      validations:
+        - type: "body_code"
+          expected: 200
+      db_verify:
+        - expect: "exists"
+          desc: "at_imex_01 已保存到 sys_user"
+          table: "sys_user"
+          where:
+            user_name: "at_imex_01"
+        - expect: "eq"
+          desc: "at_imex_01 sex=0"
+          table: "sys_user"
+          column: "sex"
+          value: "0"
+          where:
+            user_name: "at_imex_01"
+        - expect: "eq"
+          desc: "at_imex_01 status=0"
+          table: "sys_user"
+          column: "status"
+          value: "0"
+          where:
+            user_name: "at_imex_01"
+        - expect: "exists"
+          desc: "at_imex_02 已保存到 sys_user"
+          table: "sys_user"
+          where:
+            user_name: "at_imex_02"
+        - expect: "eq"
+          desc: "at_imex_02 sex=1"
+          table: "sys_user"
+          column: "sex"
+          value: "1"
+          where:
+            user_name: "at_imex_02"
+        - expect: "eq"
+          desc: "at_imex_02 status=0"
+          table: "sys_user"
+          column: "status"
+          value: "0"
+          where:
+            user_name: "at_imex_02"
+
+    # ═══════════════════════════════════════════════════════════
+    # 阶段二：导出（仅做结构校验，内容比对在 test 函数中）
+    # ═══════════════════════════════════════════════════════════
+    export:
+      params:
+        userName: "at_imex"
+      validations:
+        - type: "excel_content"
+          has_headers:
+            - "用户序号"
+            - "登录名称"
+            - "用户名称"
+            - "用户邮箱"
+            - "手机号码"
+            - "用户性别"
+            - "账号状态"
+            - "最后登录IP"
+            - "最后登录时间"
+            - "部门名称"
+            - "部门负责人"
+          min_rows: 2

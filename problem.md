@@ -207,3 +207,44 @@ else:
 - `assertions.py`：所有 validator 加 `**kwargs` + 新增 `assert_rows_in_scope`
 - `apiutil.py`：`specification_yaml` 新增 `db` + `redis_client` 参数 + `auth_user` 处理
 - 6 条查询隔离从 Python 转为 YAML（`role_scope_query.yaml`）
+
+
+---
+
+# Phase 4 Goal B 踩坑记录
+
+## 12. `{}` 空 dict 在 Python 中是 falsy
+
+**现象**：导入测试中 `import_case["headers"] = {}` 企图覆盖 base_info 的 JSON Content-Type，但请求头仍然是 `Content-Type: application/json`。file 参数虽然传了，requests 却以 JSON 而非 multipart 发送。
+
+**原因**：`specification_yaml` 的回退逻辑：
+```python
+case_headers = test_case.pop("headers", None)
+headers = self.replace_load(case_headers if case_headers else base_info["headers"])
+```
+`{}` 是 falsy → 回退到 `base_info["headers"]`（含 `Content-Type: application/json`）。
+
+**修复**：传入不含 Content-Type 的非空 headers：
+```python
+"headers": {"Accept": "application/json, text/plain, */*"}
+```
+
+关键认知：Python 中 `bool({}) == False`，回退逻辑应使用 `is None` 检测而非 falsy 检测。
+
+---
+
+## 13. `specification_export` 方法被 IDE 覆盖丢失
+
+**现象**：测试运行时报 `AttributeError: 'ApiEngine' object has no attribute 'specification_export'`，但之前已成功写入。
+
+**原因**：IDE 对 `apiutil.py` 的自动保存/格式化操作可能覆盖了新增方法。EAFP 原则——检测到缺失后重新写入即可。
+
+---
+
+## 14. conda 环境 openpyxl 依赖
+
+**现象**：`ModuleNotFoundError: No module named 'openpyxl'`。
+
+**原因**：之前检查的 Python 环境和 conda `testframe` 环境不同。openpyxl 3.1.0 在 base 环境，但 tests 在 `testframe` 中运行。
+
+**修复**：`conda run -n testframe pip install openpyxl`（v3.1.5）。

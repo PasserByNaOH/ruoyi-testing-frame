@@ -19,7 +19,6 @@ test_cases:
   # ═══════════════════════════════════════════════════════════
 
   - case_name: scope查询-dataScope1全部
-    auth_user: at_ceo_user
     params:
       pageNum: 1
       pageSize: 100
@@ -36,7 +35,6 @@ test_cases:
   # ═══════════════════════════════════════════════════════════
 
   - case_name: scope查询-dataScope2自定义
-    auth_user: at_custom_user
     params:
       pageNum: 1
       pageSize: 100
@@ -53,7 +51,6 @@ test_cases:
   # ═══════════════════════════════════════════════════════════
 
   - case_name: scope查询-dataScope3本部门
-    auth_user: at_mgr_103
     params:
       pageNum: 1
       pageSize: 100
@@ -70,7 +67,6 @@ test_cases:
   # ═══════════════════════════════════════════════════════════
 
   - case_name: scope查询-dataScope4本部门及以下
-    auth_user: at_mgr_child_103
     params:
       pageNum: 1
       pageSize: 100
@@ -87,7 +83,6 @@ test_cases:
   # ═══════════════════════════════════════════════════════════
 
   - case_name: scope查询-dataScope5仅本人
-    auth_user: at_emp_103
     params:
       pageNum: 1
       pageSize: 100
@@ -104,7 +99,6 @@ test_cases:
   # ═══════════════════════════════════════════════════════════
 
   - case_name: scope查询-同角色跨部门
-    auth_user: at_mgr_106
     params:
       pageNum: 1
       pageSize: 100

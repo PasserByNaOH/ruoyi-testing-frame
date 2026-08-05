@@ -4,7 +4,7 @@ test_role_scope.py —— DataScope 隔离测试
 依赖 isolation_users fixture（conftest.py）预置 5 角色 + 7 用户。
 
 ├── test_scope_query         → YAML 参数化（role_scope_query.yaml），
-│                               auth_user + rows_in_scope 断言
+│                               登录由 test 函数处理，rows_in_scope 断言
 ├── test_scope_write_*       → Python，写操作隔离（需要动态参数 + 403 断言）
 └── test_scope_mgr_*         → Python，DataScope 边界 + 安全漏洞
 """
@@ -13,7 +13,7 @@ import os
 import pytest
 import requests
 
-from core.apiutil import ApiEngine
+from core.apiutil import ApiEngine, login_for_yaml
 from utils.readyaml import get_runtime, get_testcase_yaml, FILE_PATH
 from utils.recordlog import logs
 
@@ -35,9 +35,14 @@ _scope_query_cases = get_testcase_yaml(
 )
 def test_scope_query(base_url, db_connection, redis_client,
                      isolation_users, base_info, case):
+    # 以 validations 中 rows_in_scope 指定的用户身份登录
+    username = case["validations"][-1]["username"]
+    token = login_for_yaml(base_url, username, redis_client)
+    case.setdefault("headers", {})
+    case["headers"]["Authorization"] = f"Bearer {token}"
+
     engine = ApiEngine()
-    engine.specification_yaml(dict(base_info), dict(case),
-                              db=db_connection, redis_client=redis_client)
+    engine.specification_yaml(dict(base_info), dict(case), db=db_connection)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -49,9 +54,7 @@ def test_scope_write_edit(base_url, redis_client, isolation_users):
     mgr_103（data_scope=3，dept=103）尝试编辑 emp_106（dept=106）。
     期望：被拦截（403 或 500）。
     """
-    from core.apiutil import login_for_yaml as login
-
-    token = login(base_url, "at_mgr_103", redis_client)
+    token = login_for_yaml(base_url, "at_mgr_103", redis_client)
     target_uid = isolation_users["user_ids"]["at_emp_106"]
 
     resp = requests.put(
@@ -79,9 +82,7 @@ def test_scope_write_delete(base_url, redis_client, isolation_users):
     """
     mgr_103（data_scope=3，dept=103）尝试删除 emp_106（dept=106）。
     """
-    from core.apiutil import login_for_yaml as login
-
-    token = login(base_url, "at_mgr_103", redis_client)
+    token = login_for_yaml(base_url, "at_mgr_103", redis_client)
     target_uid = isolation_users["user_ids"]["at_emp_106"]
 
     resp = requests.delete(
@@ -101,9 +102,7 @@ def test_scope_write_resetPwd(base_url, redis_client, isolation_users):
     """
     mgr_103（data_scope=3，dept=103）尝试重置 emp_106 的密码。
     """
-    from core.apiutil import login_for_yaml as login
-
-    token = login(base_url, "at_mgr_103", redis_client)
+    token = login_for_yaml(base_url, "at_mgr_103", redis_client)
     target_uid = isolation_users["user_ids"]["at_emp_106"]
 
     resp = requests.put(
@@ -132,9 +131,7 @@ def test_scope_mgr_edit_ceo_role(base_url, redis_client, isolation_users):
       - 403：@PreAuthorize（Layer 1，mgr 无 system:role:edit 菜单权限）
       - 500：checkRoleDataScope（Layer 2，DataScope 不覆盖）
     """
-    from core.apiutil import login_for_yaml as login
-
-    token = login(base_url, "at_mgr_103", redis_client)
+    token = login_for_yaml(base_url, "at_mgr_103", redis_client)
     ceo_role_id = isolation_users["role_ids"]["at_ceo"]
 
     resp = requests.put(
@@ -166,9 +163,7 @@ def test_scope_mgr_cancel_ceo_auth(base_url, redis_client, isolation_users):
     - 如果 @PreAuthorize 先拦截（403）→ 漏洞在 Layer 1 被挡
     - 如果放行（200）→ 漏洞存在，需要修复 Layer 2
     """
-    from core.apiutil import login_for_yaml as login
-
-    token = login(base_url, "at_mgr_103", redis_client)
+    token = login_for_yaml(base_url, "at_mgr_103", redis_client)
     ceo_role_id = isolation_users["role_ids"]["at_ceo"]
     ceo_user_id = isolation_users["user_ids"]["at_ceo_user"]
 

@@ -99,23 +99,13 @@ class ApiEngine:
     # 引擎主循环
     # ═══════════════════════════════════════════════════════════
 
-    def specification_yaml(self, base_info, test_case,
-                           db=None, redis_client=None):
+    def specification_yaml(self, base_info, test_case, db=None):
         """
         执行一条 YAML 用例：
         拼 URL → 替换变量 → 调 sendrequest → 提取数据 → 断言。
 
-        db:            ConnectMysql 实例，传给 rows_in_scope 等断言
-        redis_client:  Redis 客户端，auth_user 登录时用于查验证码
+        db:  ConnectMysql 实例，传给 rows_in_scope 等断言
         """
-        # 0. 如果指定了 auth_user，先登录拿 token
-        auth_user = test_case.pop("auth_user", None)
-        if auth_user and redis_client:
-            token = login_for_yaml(self.host, auth_user, redis_client)
-            test_case.setdefault("headers", {})
-            test_case["headers"]["Authorization"] = f"Bearer {token}"
-            logs.info(f"用例将以 [{auth_user}] 身份执行")
-
         # 1. 基本信息（用例可选覆盖 url / method / headers）
         url = self.host + (test_case.pop("url", None) or base_info["url"])
         method = test_case.pop("method", None) or base_info["method"]
@@ -207,6 +197,49 @@ class ApiEngine:
 
             except Exception as e:
                 logs.error(f"提取变量失败 [{key}]: {e}")
+
+    # ═══════════════════════════════════════════════════════════
+    # 二进制导出（Excel 等）
+    # ═══════════════════════════════════════════════════════════
+
+    def specification_export(self, base_info, test_case, db=None):
+        """
+        执行二进制导出用例（Excel 下载等）：
+        拼 URL + 查询参数 → 发请求 → 拿二进制 content → 断言。
+
+        不处理 json/data/extract/files，只处理 params 和二进制响应。
+        """
+        # 1. 拼 URL / method / headers
+        url = self.host + (test_case.pop("url", None) or base_info["url"])
+        method = test_case.pop("method", None) or base_info["method"]
+        case_headers = test_case.pop("headers", None)
+        headers = self.replace_load(case_headers if case_headers else base_info["headers"])
+        headers = self.inject_token(headers)
+        case_name = test_case.pop("case_name")
+        logs.info(f"用例: {case_name}")
+
+        # 2. 查询参数（导出过滤条件）
+        params = None
+        if "params" in test_case:
+            params = self.replace_load(test_case.pop("params"))
+
+        # 3. 断言规则
+        validations = self.replace_load(test_case.pop("validations"))
+
+        # 4. 发请求
+        resp = self.send.run_main(
+            method=method, url=url, headers=headers, params=params,
+        )
+
+        # 5. 二进制响应 → 执行断言
+        content_type = resp.headers.get("Content-Type", "")
+        if "spreadsheet" in content_type or "octet-stream" in content_type:
+            logs.info("收到二进制响应，执行二进制断言")
+            run_validations(resp, validations, db=db)
+        else:
+            logs.warning(f"预期二进制响应，实际 Content-Type: {content_type}")
+
+        return resp
 
     # ═══════════════════════════════════════════════════════════
     # 占位符

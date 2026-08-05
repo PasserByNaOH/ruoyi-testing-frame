@@ -56,7 +56,68 @@ def assert_token_absent(resp, rule, **kwargs):
 
 #   验证导出的二进制文件内容是否和数据库的数据相同
 def assert_excel_content(resp, rule, **kwargs):
-     pass
+    """
+    断言导出 Excel 的内容。
+
+    从 resp.content 解析 .xlsx，提取表头行 + 数据行，
+    然后按 rule 中的条件做验证。
+
+    支持的 rule 参数:
+        has_headers:  list[str] — 验证 Excel 表头包含指定列名
+        row_contains: dict     — 验证至少有一行包含指定 {列名: 值} 组合
+        min_rows:     int      — 验证数据行数 >= N
+        max_rows:     int      — 验证数据行数 <= N
+        row_count:    int      — 验证数据行数 == N
+    """
+    from io import BytesIO
+    from openpyxl import load_workbook
+
+    wb = load_workbook(BytesIO(resp.content))
+    ws = wb.active
+
+    # 第一行 = 表头
+    headers = [cell.value for cell in ws[1]]
+
+    # 后续行 = 数据行（跳过全空行）
+    data_rows = []
+    for row in ws.iter_rows(min_row=2, values_only=True):
+        if any(cell is not None for cell in row):
+            data_rows.append(dict(zip(headers, row)))
+
+    # ── 断言 ──
+    if "has_headers" in rule:
+        for h in rule["has_headers"]:
+            assert h in headers, (
+                f"Excel 缺少列头: {h}\n"
+                f"  实际列头: {headers}"
+            )
+
+    if "row_contains" in rule:
+        expected = rule["row_contains"]
+        found = False
+        for row in data_rows:
+            if all(str(row.get(k)) == str(v) for k, v in expected.items()):
+                found = True
+                break
+        assert found, (
+            f"Excel 中未找到匹配行: {expected}\n"
+            f"  实际数据({len(data_rows)}行): {data_rows}"
+        )
+
+    if "min_rows" in rule:
+        assert len(data_rows) >= rule["min_rows"], (
+            f"Excel 数据行数 {len(data_rows)} < 预期最少 {rule['min_rows']}"
+        )
+
+    if "max_rows" in rule:
+        assert len(data_rows) <= rule["max_rows"], (
+            f"Excel 数据行数 {len(data_rows)} > 预期最多 {rule['max_rows']}"
+        )
+
+    if "row_count" in rule:
+        assert len(data_rows) == rule["row_count"], (
+            f"Excel 数据行数 {len(data_rows)} != 预期 {rule['row_count']}"
+        )
 
 
 # ═══════════════════════════════════════════════════════════

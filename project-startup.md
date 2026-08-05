@@ -1,8 +1,8 @@
 ---
 project: ruoyi-testing-frame
 description: 项目启动文档——每开新对话时首先阅读此文件
-last_updated: 2026-08-04
-current_phase: Phase 4 Goal A 完成 → 准备 Goal B
+last_updated: 2026-08-05
+current_phase: Phase 4 Goal B 完成 → 准备 Phase 5 收尾
 ---
 
 # 若依测试框架改造 · 项目启动文档
@@ -276,7 +276,7 @@ ruoyi-testing-frame/              ← GitHub 仓库根目录
 ### Phase 4 · 角色权限 + 二进制文件
 
 **目标 A** ✅ 完成：角色 CRUD + DataScope 隔离（42 条用例）  
-**目标 B** 待开始：EXPORT-01/02（二进制下载）+ Excel 导入
+**目标 B** ✅ 完成：用户 Excel 导入导出（1 条业务流程用例）
 
 #### Goal A 实际实现
 
@@ -331,6 +331,48 @@ ruoyi-testing-frame/              ← GitHub 仓库根目录
 
 **分支**：`feature/phase4-role-permission` → merged to master
 
+
+#### Goal B 实际实现
+
+```
+新增：
+  ├── utils/excel_utils.py              → create_user_import_excel() — openpyxl 生成 .xlsx 到 data/excel/
+  ├── test_data/ruoyi/system/
+  │     └── user_import_export.yaml      → 1条业务流程用例（导入→导出）
+  └── test_runner/test_user_excel/
+        ├── conftest.py                  → db_connection / clean_at_users / ensure_admin_login
+        └── test_user_import_export.py   → 导入→DB验证→导出→Excel解析→内容比对
+
+修改：
+  ├── core/apiutil.py                    → 新增 specification_export() 处理二进制响应（隔离于 specification_yaml）
+  └── utils/assertions.py                → assert_excel_content 从空壳实现为完整断言
+                                          （has_headers / row_contains / min_rows / max_rows / row_count）
+```
+
+**1 条业务流程用例覆盖端到端**：
+- 生成 Excel（2 个用户：登录名称/用户名称/邮箱/手机号/性别/状态/部门）
+- POST /system/user/importData（multipart file + updateSupport=false）
+- 6 条 DB 验证（每用户 exists + sex/status 字段验证，含 readConverterExp 映射 男→"0"）
+- POST /system/user/export（params userName 模糊过滤）
+- 结构断言：11 列表头完整 + min_rows>=2
+- 内容比对：Python 逐行比对 6 个共有字段 + deptId→deptName DB 转换
+
+**关键设计**：
+- `specification_export()` 与 `specification_yaml()` 隔离——前者处理二进制响应，后者处理 JSON 响应；导入用 yaml（JSON 响应），导出用 export（二进制响应）
+- `excel_content` 断言：传什么验什么（has_headers/row_contains/min_rows/row_count），内容精确比对由 test 函数 Python 代码完成
+- Excel 文件落盘 `data/excel/`：导入文件可打开检查，导出文件可人工核验
+- 导入 Excel 使用人可读值（"男"/"正常"），RuoYi 的 `reverseByExp` 导入时自动转机器值（"0"），`convertByExp` 导出时转回人可读值——因此导入和导出的 sex/status 值可直接比对
+- **不直接比两个 Excel**：导入导出列头不同（导入 7 列 vs 导出 11 列），比对策略是对 6 个共有字段逐行匹配
+
+**踩坑记录**：见 `problem.md`（§12 `{}` falsy / §13 specification_export 被覆盖 / §14 openpyxl 依赖）
+
+**工时**：~4h
+
+**分支**：`feature/phase4-excel-import-export`（当前分支，待合并）
+
+
+**分支**：`feature/phase4-role-permission` → merged to master
+
 ---
 
 ### Phase 5 · 收尾
@@ -355,8 +397,7 @@ Phase 0  ████████████████████ ✅ 100%  
 Phase 1  ████████████████████ ✅ 100%   SSH + conftest          4-6h
 Phase 2  ████████████████████ ✅ 100%  登录 15 案例              ~10h
 Phase 3  ████████████████████ ✅ 100%  用户 CRUD 25 案例        ~10h
-Phase 4  ██████████████░░░░░░ ✅ A   角色权限 42 案例            ~12h
-                                  B   二进制文件                ~4-6h
+Phase 4  ████████████████████ ✅ A+B 完成                    ~16h
 Phase 5  ░░░░░░░░░░░░░░░░░░░░   0%    收尾                     3-4h
 ──────────────────────────────────────────────────────
 合计                                           45-54h（约 11-14 天）
@@ -419,6 +460,10 @@ main ─────────────────────────
 26. **`login_for_yaml()` — 不缓存策略** — 每次完整走 `/captchaImage` → Redis → `/login` 流程。隔离测试每次切换用户多 1 秒，但消除了 `login_as_user` 的 stale token 问题（旧 token 在角色重建后权限失效）
 27. **isolation_users fixture** — session 级、非 autouse，仅被 `test_role_scope.py` 请求时触发。定义在 conftest.py 中，数据定义用常量 `_ISOLATION_ROLES` / `_ISOLATION_USERS`；创建后写关键 ID 到 runtime.yaml 供 YAML 引用
 28. **角色管理端点安全审查** — `cancelAuthUser` / `cancelAuthUserAll` 缺少 `checkRoleDataScope`（对比 `selectAuthUserAll` 有）。当前被 `@PreAuthorize("system:role:edit")` 在 Layer 1 保护，漏洞仅在"用户有角色编辑菜单但 DataScope 受限"时暴露
+29. **`specification_export` 二进制导出引擎** — 新增独立方法处理 Excel 等二进制响应，与 `specification_yaml`（JSON 响应）隔离。不处理 json/data/extract/files，只处理 params + 二进制断言
+30. **excel_content 传什么验什么** — 支持 has_headers / row_contains / min_rows / max_rows / row_count，可组合使用。内容精确比对由 test 函数 Python 代码完成，避免 YAML 硬编码导出期望值
+31. **导入导出不直接比对 Excel** — 导入 7 列 vs 导出 11 列，列头不同。比对策略：对 6 个共有字段逐行匹配，deptId 查 DB 转 deptName 后比对
+32. **Excel 文件落盘 data/excel/** — 导入文件和导出结果都保存到磁盘，方便人工打开检查调试
 
 ---
 
@@ -576,4 +621,16 @@ main ─────────────────────────
 - **安全审查**：确认 `cancelAuthUser`/`cancelAuthUserAll` 缺少 `checkRoleDataScope`，但 `@PreAuthorize` 在 Layer 1 拦截；漏洞需特定条件才暴露
 - **42 条全部通过**，数据 `at_` 前缀自动清理
 - **git push 已执行**（ebc89a6，branch feature/phase4-role-permission → master）
+- **project-startup.md + problem.md 已同步**
+
+### 2026-08-05 — Phase 4 Goal B 完成
+
+- **端到端业务流设计**：导入→DB验证→导出→内容比对，一条用例覆盖完整流程
+- **specification_export 隔离**：新增独立方法处理二进制响应，不干扰 specification_yaml 的 JSON 流程
+- **assert_excel_content 实现**：传什么验什么（has_headers/row_contains/min_rows/row_count），内容精确比对由 test 函数 Python 代码完成
+- **字段映射分析**：导入 7 列（人可读值，reverseByExp 转机器值）vs 导出 11 列（convertByExp 转回人可读值）→ 6 个共有字段可直接比对
+- **踩坑**：`{}` falsy 回退、specification_export 被覆盖、openpyxl 需单独安装到 testframe 环境
+- **1 条用例全部通过**
+- **导入文件 + 导出文件落盘 data/excel/ 可人工检查**
+- **git 待 commit + push**（分支 feature/phase4-excel-import-export）
 - **project-startup.md + problem.md 已同步**
