@@ -2,7 +2,7 @@
 project: ruoyi-testing-frame
 description: 项目启动文档——每开新对话时首先阅读此文件
 last_updated: 2026-08-05
-current_phase: Phase 4 Goal B 完成 → 准备 Phase 5 收尾
+current_phase: Phase 4 全部完成（42+1+1=44 条） → 准备 Phase 5 收尾
 ---
 
 # 若依测试框架改造 · 项目启动文档
@@ -368,7 +368,37 @@ ruoyi-testing-frame/              ← GitHub 仓库根目录
 
 **工时**：~4h
 
-**分支**：`feature/phase4-excel-import-export`（当前分支，待合并）
+**分支**：`feature/phase4-excel-import-export` → merged to master
+
+
+#### 业务流程测试
+
+```
+新增：
+  ├── test_data/ruoyi/system/
+  │     └── business_flow.yaml             → 1条 6 步核心链路
+  └── test_runner/test_business/
+        ├── conftest.py                     → db_connection / clean_at_test_data（用户+角色双清理）
+        │                                     ensure_admin_login
+        └── test_business_flow.py           → 遍历 steps、replace_load 解析 ${}、extract_data 串联
+
+零新增框架代码，完全复用现有 specification_yaml + replace_load + extract_data。
+```
+
+**6 步核心链路**：
+1. POST /system/role → 创建角色
+2. GET /system/role/list → 查询角色 ID（extract → runtime.yaml）
+3. POST /system/user → 创建用户并分配角色（通过 `${get_runtime(flow_role_id)}` 引用步骤 2 的数据）
+4. GET /system/user/list → 验证用户已创建（extract userId → runtime.yaml）
+5. DELETE /system/user/{id} → 删除用户（URL 用 `${get_runtime(flow_user_id)}`）
+6. DELETE /system/role/{id} → 删除角色
+
+**关键设计**：
+- 步骤间数据通过 `extract` → runtime.yaml → `${get_runtime(key)}` 串联，和原框架的 `extract.yaml` 模式等价
+- URL 中的 `${}` 也需要 replace_load 解析（不仅是 json/params）
+- conftest 清理覆盖用户+角色双表（因为流程同时涉及两者）
+
+**工时**：~1h
 
 
 **分支**：`feature/phase4-role-permission` → merged to master
@@ -464,6 +494,7 @@ main ─────────────────────────
 30. **excel_content 传什么验什么** — 支持 has_headers / row_contains / min_rows / max_rows / row_count，可组合使用。内容精确比对由 test 函数 Python 代码完成，避免 YAML 硬编码导出期望值
 31. **导入导出不直接比对 Excel** — 导入 7 列 vs 导出 11 列，列头不同。比对策略：对 6 个共有字段逐行匹配，deptId 查 DB 转 deptName 后比对
 32. **Excel 文件落盘 data/excel/** — 导入文件和导出结果都保存到磁盘，方便人工打开检查调试
+33. **业务流程 steps 串行模式** — YAML 中 `steps` 列表定义多步操作，test 函数遍历执行。步骤间通过 `extract` → runtime.yaml → `${get_runtime(key)}` 串联数据，和原框架 `extract.yaml` 模式等价。不另写引擎，完全复用 `specification_yaml` + `replace_load` + `extract_data`
 
 ---
 
@@ -633,4 +664,12 @@ main ─────────────────────────
 - **1 条用例全部通过**
 - **导入文件 + 导出文件落盘 data/excel/ 可人工检查**
 - **git 待 commit + push**（分支 feature/phase4-excel-import-export）
+- **project-startup.md + problem.md 已同步**
+
+### 2026-08-05（下午）— 业务流测试 + auth_user 重构
+
+- **auth_user 解耦**：将登录逻辑从 `specification_yaml` 移出到 test 函数——从 engine 里删 7 行 + 从 YAML 删 6 个 `auth_user` 字段 + test 函数加 4 行 `login_for_yaml`
+- **业务流测试**：参考原框架 BusinessScenario 模式，用 YAML `steps` 列表 + Python 遍历实现 6 步核心链路（创建角色→创建用户→删用户→删角色），零新增框架代码
+- **44 条全部通过**
+- **git commit + push 待执行**
 - **project-startup.md + problem.md 已同步**

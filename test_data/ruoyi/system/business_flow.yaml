@@ -1,0 +1,86 @@
+# 系统管理核心链路业务流程测试
+# 流程：创建角色 → 查角色ID → 创建用户 → 验证 → 删用户 → 删角色
+
+base_info:
+  api_name: "系统管理业务流程"
+  headers:
+    Content-Type: "application/json;charset=UTF-8"
+
+test_cases:
+  - case_name: "核心链路-创建角色到删除用户"
+
+    steps:
+      # ── 步骤 1：创建角色 ──
+      - case_name: "步骤1-创建角色"
+        method: "post"
+        url: "/system/role"
+        json:
+          roleName: "at_flow_role"
+          roleKey: "at_flow"
+          roleSort: 1
+          status: "0"
+          menuIds: [1]
+        validations:
+          - type: "body_code"
+            expected: 200
+
+      # ── 步骤 2：查询角色 ID ──
+      - case_name: "步骤2-查询角色ID"
+        method: "get"
+        url: "/system/role/list"
+        params:
+          roleName: "at_flow_role"
+        extract:
+          flow_role_id: "$.rows[0].roleId"
+        validations:
+          - type: "status_code"
+            expected: 200
+          - type: "body_code"
+            expected: 200
+
+      # ── 步骤 3：创建用户并分配角色 ──
+      - case_name: "步骤3-创建用户"
+        method: "post"
+        url: "/system/user"
+        json:
+          userName: "at_flow_user"
+          nickName: "业务流程测试"
+          deptId: 103
+          password: "123456"
+          roleIds: ["${get_runtime(flow_role_id)}"]
+          postIds: [2]
+          sex: "0"
+          status: "0"
+        validations:
+          - type: "body_code"
+            expected: 200
+
+      # ── 步骤 4：查询用户验证已创建 ──
+      - case_name: "步骤4-验证用户已创建"
+        method: "get"
+        url: "/system/user/list"
+        params:
+          userName: "at_flow_user"
+        extract:
+          flow_user_id: "$.rows[0].userId"
+        validations:
+          - type: "body_code"
+            expected: 200
+          - type: "body_contains"
+            keyword: "at_flow_user"
+
+      # ── 步骤 5：删除用户 ──
+      - case_name: "步骤5-删除用户"
+        method: "delete"
+        url: "/system/user/${get_runtime(flow_user_id)}"
+        validations:
+          - type: "body_code"
+            expected: 200
+
+      # ── 步骤 6：删除角色 ──
+      - case_name: "步骤6-删除角色"
+        method: "delete"
+        url: "/system/role/${get_runtime(flow_role_id)}"
+        validations:
+          - type: "body_code"
+            expected: 200
