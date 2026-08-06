@@ -1,0 +1,18 @@
+<environment>
+    <parameter>
+        <key>项目</key>
+        <value>若依管理系统自动化测试</value>
+    </parameter>
+    <parameter>
+        <key>服务器</key>
+        <value>&lt;服务器IP&gt;:8080</value>
+    </parameter>
+    <parameter>
+        <key>Python</key>
+        <value>3.12</value>
+    </parameter>
+    <parameter>
+        <key>Allure</key>
+        <value>2.43.0</value>
+    </parameter>
+</environment>

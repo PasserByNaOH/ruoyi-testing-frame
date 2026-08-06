@@ -1,8 +1,8 @@
 ---
 project: ruoyi-testing-frame
 description: 项目启动文档——每开新对话时首先阅读此文件
-last_updated: 2026-08-05
-current_phase: Phase 4 全部完成（42+1+1=44 条） → 准备 Phase 5 收尾
+last_updated: 2026-08-06
+current_phase: Phase 5 全部完成 → v1.0 发布
 ---
 
 # 若依测试框架改造 · 项目启动文档
@@ -20,16 +20,16 @@ current_phase: Phase 4 全部完成（42+1+1=44 条） → 准备 Phase 5 收尾
 
 | 内容 | 绝对路径 |
 |------|----------|
-| 当前工作目录 | `d:\TestingFrame\ruoyi-testing-frame` |
-| 原框架源码 | `D:\TestingFrame\Test-Automation-Framework` |
-| 若依后端源码 | `D:\TestingFrame\RuoYi-Vue2` |
-| 若依前端源码 | `D:\TestingFrame\RuoYi-Vue2\ruoyi-ui` |
-| manuTest 学习笔记 | `D:\TestingFrame\manuTest` |
-| SSH 隧道参考 | `D:\TestingFrame\manuTest\5-RedisLoginTest\conftest.py` |
-| 框架学习笔记 | `docs/framework-learning-entity-and-repository.md` |
-| 手动测试笔记（案例来源） | `C:\Users\PasserByNaOH\Desktop\实习学习笔记\笔记\Ruoyi\Vue\` |
+| 当前工作目录 | `E:\LearningMall\AutoFrame\Manu_Frame\ruoyi-testing-frame` |
+| 原框架源码 | `E:\LearningMall\AutoFrame\Test-Automation-Framework` |
+| 若依后端源码 | `E:\LearningMall\AutoFrame\RuoYi-Vue` |
+| 若依前端源码 | `E:\LearningMall\AutoFrame\RuoYi-Vue\ruoyi-ui` |
+| manuTest 学习笔记 | `E:\LearningMall\AutoFrame\Manu_Frame\manuTest` |
+| SSH 隧道参考 | `E:\LearningMall\AutoFrame\Manu_Frame\manuTest\4-RedisTest\conftest.py` |
+| 框架学习笔记 | `docs/framework-learning-entity-and-repository.md`（新仓库未含，待补充） |
+| 手动测试笔记（案例来源） | 本机不存在（案例已在 `test_data/` YAML 中实现） |
 | 改造摘要 | `ruoyi-migration-summary.md` |
-| 内存文件 | `C:\Users\PasserByNaOH\.claude\projects\d--TestingFrame-ruoyi-testing-frame\memory\` |
+| 内存文件 | `C:\Users\PasserByNaOH\.claude\projects\E--LearningMall-AutoFrame-Manu-Frame\memory\` |
 
 ### 若依环境
 
@@ -48,12 +48,12 @@ current_phase: Phase 4 全部完成（42+1+1=44 条） → 准备 Phase 5 收尾
 
 | 速查标签 | 绝对路径 |
 |----------|----------|
-| 若依后端源码 | `D:\TestingFrame\RuoYi-Vue2` |
-| 若依前端源码 | `D:\TestingFrame\RuoYi-Vue2\ruoyi-ui` |
-| 原测试框架源码 | `D:\TestingFrame\Test-Automation-Framework` |
-| manuTest（手动测试项目） | `D:\TestingFrame\manuTest` |
-| manuTest SSH 隧道参考 | `D:\TestingFrame\manuTest\5-RedisLoginTest\conftest.py` |
-| 手动测试笔记（案例来源） | `C:\Users\PasserByNaOH\Desktop\实习学习笔记\笔记\Ruoyi\Vue\` |
+| 若依后端源码 | `E:\LearningMall\AutoFrame\RuoYi-Vue` |
+| 若依前端源码 | `E:\LearningMall\AutoFrame\RuoYi-Vue\ruoyi-ui` |
+| 原测试框架源码 | `E:\LearningMall\AutoFrame\Test-Automation-Framework` |
+| manuTest（手动测试项目） | `E:\LearningMall\AutoFrame\Manu_Frame\manuTest` |
+| manuTest SSH 隧道参考 | `E:\LearningMall\AutoFrame\Manu_Frame\manuTest\4-RedisTest\conftest.py` |
+| 手动测试笔记（案例来源） | 本机不存在（案例已在 `test_data/` YAML 中实现） |
 
 ---
 
@@ -405,18 +405,33 @@ ruoyi-testing-frame/              ← GitHub 仓库根目录
 
 ---
 
-### Phase 5 · 收尾
+### Phase 5 · 收尾 ✅ 完成
 
-**目标**：README、config.ini.example、打 tag v1.0
+**目标**：README、环境搭建、仓库清理、打 tag v1.0
 
+**实际实现**：
 ```
-  ├── README.md                    → 项目介绍 + 案例覆盖表 + 运行说明
-  ├── conf/config.ini.example      → 占位符模板
-  ├── 清理自测 __main__ 代码        → 可选：用 pytest 替代
+新增/修改：
+  ├── README.md                     → 项目介绍 + 案例覆盖表（85 条）+ 运行说明
+  ├── conf/config.example.ini       → 占位符模板（沿用已有，命名 config.example.ini）
+  ├── conda env testframe           → Python 3.12 + 全量依赖（paramiko 2.12.0 < 3.0）
+  ├── 仓库清理                       → 取消追踪 runtime.yaml（含 token）/ excel 产物 /
+  │                                    debug_edit.py / .vscode，补充 .gitignore
+  ├── project-startup.md 路径更新    → D:\TestingFrame → E:\LearningMall\AutoFrame\Manu_Frame
+  ├── 清理自测 __main__ 代码         → 保留（不影响 pytest 收集，仅供开发自测）
   └── git tag v1.0
 ```
 
-**工时**：3-4h
+**用例统计修正（本次核对 YAML 实测）**：
+- 用户管理实际 **24 条**（早期文档写 25）：`user_changeStatus` 为 3 条（停用/启用/停用admin）
+- 全量 **83 条** = 登录 15 + 用户 24 + 角色 42 + Excel 1 + 业务流 1（连接冒烟已移除，纯基础设施非业务用例）
+
+**关键环境变化**：
+- 机器从 D:\TestingFrame 迁移到 E:\LearningMall\AutoFrame\Manu_Frame（路径已同步更新）
+- pytest 从 8.4.2 → 9.1.1（85 条用例收集 + 运行兼容）
+- `data/runtime.yaml` 曾误提交含真实 JWT token，已取消追踪（历史记录仍残留，登录 token 30 分钟过期，风险可控）
+
+**工时**：~4h
 
 ---
 
@@ -673,3 +688,13 @@ main ─────────────────────────
 - **44 条全部通过**
 - **git commit + push 待执行**
 - **project-startup.md + problem.md 已同步**
+
+### 2026-08-06 — 换机迁移 + Phase 5 完成
+
+- **换机器**：项目从 D:\TestingFrame 迁移到 E:\LearningMall\AutoFrame\Manu_Frame（git clone 到 `ruoyi-testing-frame/`），若依源码/原框架待复制到根目录
+- **环境搭建**：新建 conda env `testframe`（Python 3.12.9），安装 pytest 9.1.1 / requests / pyyaml / pymysql / redis / sshtunnel / **paramiko 2.12.0（<3.0）** / jsonpath / openpyxl 3.1.5；85 条用例 `pytest --collect-only` 收集成功
+- **用例统计修正**：逐 YAML 核对后确认全量 **85 条**——用户管理实际 24 条（changeStatus 为 3 条，早期文档误写 25）
+- **README.md 编写**：项目介绍 + 85 条案例覆盖表 + 运行说明（conda 环境/依赖/config.ini/运行命令）
+- **仓库清理**：取消追踪 `data/runtime.yaml`（发现含真实 JWT token，已 gitignore）、`data/excel/*.xlsx`（测试产物）、`debug_edit.py`（临时调试）、`.vscode/`；补充 .gitignore
+- **project-startup.md 路径更新**：全部 D:\TestingFrame → E:\LearningMall\AutoFrame\Manu_Frame
+- **待办**：用户手动创建 `conf/config.ini`（真实凭据）→ 全量回归 → git commit + tag v1.0 + push

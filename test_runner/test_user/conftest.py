@@ -7,6 +7,7 @@ test_user/conftest.py —— 用户管理测试专用 fixtures
   ensure_admin_login  → session 级 autouse，登录 admin → token 写入 runtime.yaml
 """
 
+import allure
 import pytest
 import requests
 from configparser import ConfigParser
@@ -109,3 +110,22 @@ def ensure_admin_login(base_url, redis_client):
     # 4. 写入 runtime.yaml
     write_runtime({"token": token})
     logs.info(f"admin 登录成功，token 已写入 runtime.yaml")
+
+
+# ═══════════════════════════════════════════════════════════
+# Allure 钩子 —— story 按 test 函数名自动映射
+# ═══════════════════════════════════════════════════════════
+
+def pytest_collection_modifyitems(items):
+    for item in items:
+        fn = item.originalname
+        if "test_user_add" in fn:
+            item.add_marker(allure.story("新增用户"))
+        elif "test_user_edit" in fn:
+            item.add_marker(allure.story("编辑用户"))
+        elif "test_user_delete" in fn:
+            item.add_marker(allure.story("删除用户"))
+        elif "test_user_resetPwd" in fn:
+            item.add_marker(allure.story("重置密码"))
+        elif "test_user_changeStatus" in fn:
+            item.add_marker(allure.story("状态切换"))

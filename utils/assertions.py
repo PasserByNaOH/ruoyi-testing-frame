@@ -1,3 +1,7 @@
+import json
+
+import allure
+
 from utils.recordlog import logs
 
 # ═══════════════════════════════════════════════════════════
@@ -222,7 +226,13 @@ def run_validations(resp, validations, **kwargs):
           validate_func = VALIDATORS.get(validate_type)
           if validate_func is None:
                raise ValueError(f"不支持的断言类型: {validate_type}")
-          validate_func(resp, rule, **kwargs)
+          with allure.step(f"断言: {validate_type}"):
+              allure.attach(
+                  json.dumps(rule, ensure_ascii=False, indent=2),
+                  "预期",
+                  allure.attachment_type.JSON,
+              )
+              validate_func(resp, rule, **kwargs)
           logs.info(f"断言通过: {validate_type}")
 
 
@@ -261,6 +271,7 @@ def run_db_verify(db, rules):
       not_empty  — SELECT column IS NOT NULL AND != ''
     """
     for rule in rules:
+        desc = rule["desc"]
         expect = rule["expect"]
         table = rule["table"]
         where = rule["where"]
@@ -269,56 +280,63 @@ def run_db_verify(db, rules):
         clause = " AND ".join(pairs)
         params = [coerce_db_param(v) for v in where.values()]
 
-        if expect == "exists":
-            sql = f"SELECT COUNT(*) FROM {table} WHERE {clause}"
-            actual = db.query(sql, params)[0]["COUNT(*)"]
-            assert actual >= 1, (
-                f"DB验证失败 [{rule['desc']}]\n"
-                f"  SQL: {sql}\n  params: {params}\n"
-                f"  COUNT(*): {actual} (预期 >=1)"
+        with allure.step(f"DB验证: {desc}"):
+            allure.attach(
+                json.dumps(rule, ensure_ascii=False, indent=2, default=str),
+                "预期",
+                allure.attachment_type.JSON,
             )
 
-        elif expect == "count":
-            sql = f"SELECT COUNT(*) FROM {table} WHERE {clause}"
-            actual = db.query(sql, params)[0]["COUNT(*)"]
-            assert actual == rule["value"], (
-                f"DB验证失败 [{rule['desc']}]\n"
-                f"  SQL: {sql}\n  params: {params}\n"
-                f"  COUNT(*): {actual} (预期 {rule['value']})"
-            )
+            if expect == "exists":
+                sql = f"SELECT COUNT(*) FROM {table} WHERE {clause}"
+                actual = db.query(sql, params)[0]["COUNT(*)"]
+                assert actual >= 1, (
+                    f"DB验证失败 [{rule['desc']}]\n"
+                    f"  SQL: {sql}\n  params: {params}\n"
+                    f"  COUNT(*): {actual} (预期 >=1)"
+                )
 
-        elif expect == "eq":
-            sql = f"SELECT {rule['column']} FROM {table} WHERE {clause}"
-            rows = db.query(sql, params)
-            assert rows, (
-                f"DB验证失败 [{rule['desc']}]\n"
-                f"  SQL: {sql}\n  params: {params}\n"
-                f"  查询结果: 0 行，用户可能不存在"
-            )
-            actual = rows[0][rule["column"]]
-            assert str(actual) == str(rule["value"]), (
-                f"DB验证失败 [{rule['desc']}]\n"
-                f"  SQL: {sql}\n  params: {params}\n"
-                f"  实际: {actual!r}\n  预期: {rule['value']!r}"
-            )
+            elif expect == "count":
+                sql = f"SELECT COUNT(*) FROM {table} WHERE {clause}"
+                actual = db.query(sql, params)[0]["COUNT(*)"]
+                assert actual == rule["value"], (
+                    f"DB验证失败 [{rule['desc']}]\n"
+                    f"  SQL: {sql}\n  params: {params}\n"
+                    f"  COUNT(*): {actual} (预期 {rule['value']})"
+                )
 
-        elif expect == "not_empty":
-            sql = f"SELECT {rule['column']} FROM {table} WHERE {clause}"
-            rows = db.query(sql, params)
-            assert rows, (
-                f"DB验证失败 [{rule['desc']}]\n"
-                f"  SQL: {sql}\n  params: {params}\n"
-                f"  查询结果: 0 行，用户可能不存在"
-            )
-            actual = rows[0][rule["column"]]
-            assert actual not in (None, ""), (
-                f"DB验证失败 [{rule['desc']}]\n"
-                f"  SQL: {sql}\n  params: {params}\n"
-                f"  实际: {actual!r}（预期非空）"
-            )
+            elif expect == "eq":
+                sql = f"SELECT {rule['column']} FROM {table} WHERE {clause}"
+                rows = db.query(sql, params)
+                assert rows, (
+                    f"DB验证失败 [{rule['desc']}]\n"
+                    f"  SQL: {sql}\n  params: {params}\n"
+                    f"  查询结果: 0 行，用户可能不存在"
+                )
+                actual = rows[0][rule["column"]]
+                assert str(actual) == str(rule["value"]), (
+                    f"DB验证失败 [{rule['desc']}]\n"
+                    f"  SQL: {sql}\n  params: {params}\n"
+                    f"  实际: {actual!r}\n  预期: {rule['value']!r}"
+                )
 
-        else:
-            raise ValueError(f"不支持的 DB 验证类型: {expect}")
+            elif expect == "not_empty":
+                sql = f"SELECT {rule['column']} FROM {table} WHERE {clause}"
+                rows = db.query(sql, params)
+                assert rows, (
+                    f"DB验证失败 [{rule['desc']}]\n"
+                    f"  SQL: {sql}\n  params: {params}\n"
+                    f"  查询结果: 0 行，用户可能不存在"
+                )
+                actual = rows[0][rule["column"]]
+                assert actual not in (None, ""), (
+                    f"DB验证失败 [{rule['desc']}]\n"
+                    f"  SQL: {sql}\n  params: {params}\n"
+                    f"  实际: {actual!r}（预期非空）"
+                )
+
+            else:
+                raise ValueError(f"不支持的 DB 验证类型: {expect}")
 
         logs.info(f"DB验证通过: {rule['desc']}")
 

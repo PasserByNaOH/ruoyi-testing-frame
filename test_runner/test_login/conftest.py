@@ -4,6 +4,7 @@ test_login/conftest.py —— 登录测试专用 fixtures
 base_url、redis_client 已提至根 conftest.py，本文件只保留登录特有的 fixtures。
 """
 
+import allure
 import pytest
 
 from utils.readyaml import clear_runtime
@@ -23,3 +24,16 @@ def clean_pwd_error_count(redis_client):
     """每个测试后删除 LoginTestUser 的密码错误计数，保证用例间独立。"""
     yield
     redis_client.delete("pwd_err_cnt:LoginTestUser")
+
+
+# ═══════════════════════════════════════════════════════════
+# Allure 钩子 —— story 按文件自动映射
+# ═══════════════════════════════════════════════════════════
+
+def pytest_collection_modifyitems(items):
+    for item in items:
+        path = str(item.fspath)
+        if "test_login_success" in path:
+            item.add_marker(allure.story("登录成功"))
+        elif "test_login_fail" in path:
+            item.add_marker(allure.story("登录失败"))

@@ -3,6 +3,7 @@ import re
 import configparser
 from json.decoder import JSONDecodeError
 
+import allure
 import jsonpath
 import requests
 
@@ -107,12 +108,14 @@ class ApiEngine:
         db:  ConnectMysql 实例，传给 rows_in_scope 等断言
         """
         # 1. 基本信息（用例可选覆盖 url / method / headers）
-        url = self.host + (test_case.pop("url", None) or base_info["url"])
+        case_url = test_case.pop("url", None)
+        url = self.host + (case_url or base_info["url"])
         method = test_case.pop("method", None) or base_info["method"]
         case_headers = test_case.pop("headers", None)
         headers = self.replace_load(case_headers if case_headers else base_info["headers"])
         headers = self.inject_token(headers)
         case_name = test_case.pop("case_name")
+        allure.dynamic.title(case_name)
         logs.info(f"用例: {case_name}")
 
         # 2. 拼请求体（data / json / params 三选一）
@@ -121,7 +124,7 @@ class ApiEngine:
             if key in test_case:
                 request_body[key] = self.replace_load(test_case.pop(key))
 
-        # 3. 文件上传（Phase 4 实现）
+        # 3. 文件上传
         files = test_case.pop("files", None)
 
         # 4. 提取规则（可选）
@@ -130,17 +133,48 @@ class ApiEngine:
         # 5. 断言规则
         validations = self.replace_load(test_case.pop("validations"))
 
+        # ── Allure: 附着请求信息 ──
+        rel_url = case_url or base_info.get("url", "")
+        with allure.step(f"{method.upper()} {rel_url}"):
+            allure.attach(
+                json.dumps({
+                    "url": url,
+                    "method": method.upper(),
+                }, ensure_ascii=False, indent=2),
+                "请求摘要",
+                allure.attachment_type.JSON,
+            )
+            for k, v in request_body.items():
+                allure.attach(
+                    json.dumps(v, ensure_ascii=False, indent=2),
+                    f"请求体({k})",
+                    allure.attachment_type.JSON,
+                )
+            if files:
+                allure.attach(
+                    json.dumps({k: v[0] for k, v in files.items()},
+                               ensure_ascii=False),
+                    "上传文件",
+                    allure.attachment_type.JSON,
+                )
+
         # 6. 发请求
         resp = self.send.run_main(
             method=method, url=url, headers=headers,
             files=files, **request_body
         )
 
-        # 7. 处理响应
+        # ── Allure: 附着响应 ──
         content_type = resp.headers.get("Content-Type", "")
 
         if "json" in content_type:
             try:
+                resp_body = resp.json()
+                allure.attach(
+                    json.dumps(resp_body, ensure_ascii=False, indent=2),
+                    f"响应 (HTTP {resp.status_code})",
+                    allure.attachment_type.JSON,
+                )
                 # 提取数据
                 if extract_rules:
                     self.extract_data(extract_rules, resp.text)
@@ -151,12 +185,19 @@ class ApiEngine:
                 raise
 
         elif "octet-stream" in content_type:
-            # Phase 4: 二进制响应（Excel 导入导出等）
-            logs.info("收到二进制响应，暂不处理（Phase 4 实现）")
-            # 占位：暂不抛异常，等 Phase 4 加二进制断言
+            allure.attach(
+                f"HTTP {resp.status_code}\nContent-Type: {content_type}\n"
+                f"文件大小: {len(resp.content)} bytes",
+                "响应 (二进制)",
+                allure.attachment_type.TEXT,
+            )
 
         else:
-            logs.warning(f"未知 Content-Type: {content_type}，按 JSON 处理")
+            allure.attach(
+                resp.text,
+                f"响应 (HTTP {resp.status_code})",
+                allure.attachment_type.TEXT,
+            )
             run_validations(resp, validations, db=db)
 
         return resp
@@ -210,12 +251,14 @@ class ApiEngine:
         不处理 json/data/extract/files，只处理 params 和二进制响应。
         """
         # 1. 拼 URL / method / headers
-        url = self.host + (test_case.pop("url", None) or base_info["url"])
+        case_url = test_case.pop("url", None)
+        url = self.host + (case_url or base_info["url"])
         method = test_case.pop("method", None) or base_info["method"]
         case_headers = test_case.pop("headers", None)
         headers = self.replace_load(case_headers if case_headers else base_info["headers"])
         headers = self.inject_token(headers)
         case_name = test_case.pop("case_name")
+        allure.dynamic.title(case_name)
         logs.info(f"用例: {case_name}")
 
         # 2. 查询参数（导出过滤条件）
@@ -226,15 +269,36 @@ class ApiEngine:
         # 3. 断言规则
         validations = self.replace_load(test_case.pop("validations"))
 
+        # ── Allure: 附着请求信息 ──
+        rel_url = case_url or base_info.get("url", "")
+        with allure.step(f"{method.upper()} {rel_url}"):
+            allure.attach(
+                json.dumps({"url": url, "method": method.upper()},
+                           ensure_ascii=False, indent=2),
+                "请求摘要",
+                allure.attachment_type.JSON,
+            )
+            if params:
+                allure.attach(
+                    json.dumps(params, ensure_ascii=False, indent=2),
+                    "请求参数(params)",
+                    allure.attachment_type.JSON,
+                )
+
         # 4. 发请求
         resp = self.send.run_main(
             method=method, url=url, headers=headers, params=params,
         )
 
-        # 5. 二进制响应 → 执行断言
+        # ── Allure: 附着二进制响应 ──
         content_type = resp.headers.get("Content-Type", "")
         if "spreadsheet" in content_type or "octet-stream" in content_type:
-            logs.info("收到二进制响应，执行二进制断言")
+            allure.attach(
+                f"HTTP {resp.status_code}\nContent-Type: {content_type}\n"
+                f"文件大小: {len(resp.content)} bytes",
+                "响应 (二进制)",
+                allure.attachment_type.TEXT,
+            )
             run_validations(resp, validations, db=db)
         else:
             logs.warning(f"预期二进制响应，实际 Content-Type: {content_type}")

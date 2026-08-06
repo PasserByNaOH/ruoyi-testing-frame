@@ -5,6 +5,7 @@ Phase 1: SSH 隧道（Redis + MySQL 双端口转发）
 Phase 3: base_url + redis_client（session 级，所有子模块继承）
 """
 
+import allure
 import pytest
 import redis
 from configparser import ConfigParser
@@ -50,10 +51,10 @@ def ssh_tunnel():
             (mysql_host, mysql_port),
         ],
     )
-    tunnel.start()
-
-    logs.info(f"SSH 隧道已建立 → Redis 本地端口: {tunnel.local_bind_ports[0]}, "
-              f"MySQL 本地端口: {tunnel.local_bind_ports[1]}")
+    with allure.step("前置-SSH隧道"):
+        tunnel.start()
+        logs.info(f"SSH 隧道已建立 → Redis 本地端口: {tunnel.local_bind_ports[0]}, "
+                  f"MySQL 本地端口: {tunnel.local_bind_ports[1]}")
 
     yield {
         "tunnel": tunnel,
@@ -87,11 +88,34 @@ def redis_client(ssh_tunnel):
         db=cf.getint("REDIS", "db"),
         decode_responses=True,
     )
-    r.ping()
-    logs.info("Redis 连接成功，注入 DebugTalk")
-    DebugTalk.set_redis_client(r)
+    with allure.step("前置-Redis连接"):
+        r.ping()
+        logs.info("Redis 连接成功，注入 DebugTalk")
+        DebugTalk.set_redis_client(r)
 
     yield r
 
     r.close()
     logs.info("Redis 连接已关闭")
+
+
+# ═══════════════════════════════════════════════════════════
+# Allure 报告钩子 —— epic / feature 自动映射
+# ═══════════════════════════════════════════════════════════
+
+def pytest_collection_modifyitems(items):
+    """根据测试文件所在目录自动添加 epic + feature 标记。"""
+    for item in items:
+        item.add_marker(allure.epic("若依管理系统"))
+
+        path = str(item.fspath)
+        if "test_login" in path:
+            item.add_marker(allure.feature("登录"))
+        elif "test_user" in path and "test_user_excel" not in path:
+            item.add_marker(allure.feature("用户管理"))
+        elif "test_role" in path:
+            item.add_marker(allure.feature("角色权限"))
+        elif "test_user_excel" in path:
+            item.add_marker(allure.feature("Excel导入导出"))
+        elif "test_business" in path:
+            item.add_marker(allure.feature("业务流程"))

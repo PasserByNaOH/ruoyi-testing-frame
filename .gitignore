@@ -4,6 +4,12 @@ conf/config.ini
 # 开发阶段自测用例
 yamlRead_test.yaml
 
+# 临时调试脚本
+debug_edit.py
+
+# 测试产物（Excel 导入/导出文件）
+data/excel/
+
 # Python 缓存
 __pycache__/
 
@@ -12,3 +18,16 @@ logs/*.log
 
 # 运行时变量（含 token，不能提交）
 data/runtime.yaml
+
+# IDE 配置
+.vscode/
+.idea/
+
+# Allure 学习目录（纯学习,非框架代码）
+allure_learn/
+
+# Allure 环境信息（含真实服务器 IP）
+environment.xml
+
+# Allure 测试报告（本地生成）
+report/

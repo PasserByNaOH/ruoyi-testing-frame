@@ -13,6 +13,7 @@ test_role/conftest.py —— 角色测试专用 fixtures
   redis_client → Redis 连接（已注入 DebugTalk）
 """
 
+import allure
 import pytest
 import requests
 from configparser import ConfigParser
@@ -268,3 +269,32 @@ def isolation_users(base_url, db_connection):
     write_runtime(_runtime_map)
 
     return {"role_ids": role_ids, "user_ids": user_ids}
+
+
+# ═══════════════════════════════════════════════════════════
+# Allure 钩子 —— story 按文件 + 函数名自动映射
+# ═══════════════════════════════════════════════════════════
+
+def pytest_collection_modifyitems(items):
+    for item in items:
+        path = str(item.fspath)
+        fn = item.originalname
+
+        # ── DataScope 隔离（test_role_scope.py）──
+        if "test_role_scope" in path:
+            item.add_marker(allure.story("DataScope隔离"))
+            continue
+
+        # ── 角色 CRUD（test_role_crud.py）──
+        if "test_role_add" in fn:
+            item.add_marker(allure.story("新增角色"))
+        elif "test_role_edit" in fn:
+            item.add_marker(allure.story("编辑角色"))
+        elif "test_role_delete" in fn:
+            item.add_marker(allure.story("删除角色"))
+        elif "test_role_changeStatus" in fn:
+            item.add_marker(allure.story("角色状态"))
+        elif "test_role_dataScope" in fn:
+            item.add_marker(allure.story("DataScope设置"))
+        elif "test_role_authUser" in fn:
+            item.add_marker(allure.story("用户授权"))
