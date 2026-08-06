@@ -2,7 +2,7 @@
 project: ruoyi-testing-frame
 description: 项目启动文档——每开新对话时首先阅读此文件
 last_updated: 2026-08-06
-current_phase: Phase 5 全部完成 → v1.0 发布
+current_phase: Phase 5 完成 → v1.0 发布 → 规划 Phase 6 CI/CD
 ---
 
 # 若依测试框架改造 · 项目启动文档
@@ -435,6 +435,59 @@ ruoyi-testing-frame/              ← GitHub 仓库根目录
 
 ---
 
+### Phase 6 · CI/CD（Jenkins 集成）
+
+**目标**：Jenkins 自动化构建 + Allure 报告归档 + 定时执行
+
+**参考源框架**：
+- 源框架使用 `python-jenkins` 库查询 Jenkins 构建状态、测试报告、控制台日志（`common/Pjenkins.py`）
+- Jenkins Job 配置：拉代码 → `python run.py` → 归档 Allure 报告 → 邮件通知
+- 源框架没有 Jenkinsfile（Pipeline as Code），CI 流程依赖 Jenkins 管理端手工配置
+
+**计划实现**：
+
+```
+├── Jenkinsfile                    → Pipeline as Code（拉代码 → 安装依赖 → 跑全量 → 归档报告）
+├── utils/jenkins.py              → Jenkins API 封装（查询构建状态 / 获取测试报告统计）
+├── conf/config.ini 追加节          → [JENKINS] url / username / password / job_name
+├── pyproject.toml                 → 依赖管理（添加 python-jenkins）
+└── .github/                       → 不创建（Phase 6 只做 Jenkins）
+```
+
+**学习任务**：
+1. 本地 Docker 部署 Jenkins，配置 Allure 插件
+2. 编写 Jenkinsfile（Declarative Pipeline）：Checkout → conda 环境 → pytest → allure generate → 归档
+3. 编写 `utils/jenkins.py`：封装 python-jenkins，提供 `get_build_status()` / `get_report_stats()`
+4. 配置定时构建（H 2 * * *，每天凌晨 2 点）+ 邮件/钉钉通知
+
+**Jenkinsfile 核心步骤**：
+```groovy
+pipeline {
+    agent any
+    triggers { cron('H 2 * * *') }
+    stages {
+        stage('Checkout')   { steps { git '...' } }
+        stage('Install')    { steps { sh 'pip install ...' } }
+        stage('Test')       { steps { sh 'python -m pytest --alluredir=report/temp --clean-alluredir' } }
+        stage('Report')     { steps { allure includeProperties: false, results: [[path: 'report/temp']] } }
+    }
+    post {
+        always { allure includeProperties: false, results: [[path: 'report/temp']] }
+        success { emailext ... }
+        failure { emailext ... }
+    }
+}
+```
+
+**区别于源框架的改进**：
+- 用 Jenkinsfile（Pipeline as Code）替代手工配置，CI 流程版本可控
+- 用 `conda run -n testframe` 隔离 Python 环境
+- 源框架的 `Pjenkins.py` 仅查询构建结果，我们的 `utils/jenkins.py` 扩展为：查询 + 触发构建 + 获取 Allure 报告链接
+
+**工时**：8-12h（含 Jenkins 学习 + Docker 部署 + 调试）
+
+---
+
 ### 总预估
 
 ```
@@ -443,9 +496,10 @@ Phase 1  ████████████████████ ✅ 100%  
 Phase 2  ████████████████████ ✅ 100%  登录 15 案例              ~10h
 Phase 3  ████████████████████ ✅ 100%  用户 CRUD 25 案例        ~10h
 Phase 4  ████████████████████ ✅ A+B 完成                    ~16h
-Phase 5  ░░░░░░░░░░░░░░░░░░░░   0%    收尾                     3-4h
+Phase 5  ████████████████████ ✅ 100%  收尾                     3-4h
+Phase 6  ░░░░░░░░░░░░░░░░░░░░   0%    Jenkins CI/CD             8-12h
 ──────────────────────────────────────────────────────
-合计                                           45-54h（约 11-14 天）
+合计                                           53-66h（约 14-17 天）
 ```
 
 > **案例来源**：手动测试笔记 `C:\Users\PasserByNaOH\Desktop\实习学习笔记\笔记\Ruoyi\Vue\` 中的 ~35 条案例（B2 登录 / C1 用户管理 / D 角色管理 / C2 部门岗位 + 导出 / E 独立模块），框架目标是复现这些手动案例。
@@ -456,16 +510,13 @@ Phase 5  ░░░░░░░░░░░░░░░░░░░░   0%    �
 
 ### 主力：Feature Branch Workflow
 ```
-main ────────────────────────────────────────────────→
+master ───────────────────────────────────────────────→
   │
-  ├── feature/phase0-init ────→ merge (PR)
-  ├── feature/phase1-infra ────→ merge (PR)
-  ├── feature/phase2-adapt ────→ merge (PR)
-  ├── feature/phase3-login ────→ merge (PR)
-  ├── feature/phase4-user ─────→ merge (PR)
-  ├── feature/phase4-role ─────→ merge (PR)
-  ├── feature/phase5-jenkins ──→ merge (PR)
-  └── v1.0 tag
+  ├── feature/phase3-db-verify-v2 ──→ merge（Phase 3 DB 验证）
+  ├── feature/phase4-role-permission ──→ merge（Phase 4 角色权限）
+  ├── feature/phase4-excel-import-export ──→ merge（Phase 4 Excel）
+  ├── tag v1.0（Phase 5 收尾：README + Allure + 清理）
+  └── feature/phase6-jenkins ──（规划中）
 ```
 
 ### 决策规则
@@ -689,12 +740,16 @@ main ─────────────────────────
 - **git commit + push 待执行**
 - **project-startup.md + problem.md 已同步**
 
-### 2026-08-06 — 换机迁移 + Phase 5 完成
+### 2026-08-06 — 换机迁移 + Phase 5 完成 + Phase 6 规划
 
-- **换机器**：项目从 D:\TestingFrame 迁移到 E:\LearningMall\AutoFrame\Manu_Frame（git clone 到 `ruoyi-testing-frame/`），若依源码/原框架待复制到根目录
-- **环境搭建**：新建 conda env `testframe`（Python 3.12.9），安装 pytest 9.1.1 / requests / pyyaml / pymysql / redis / sshtunnel / **paramiko 2.12.0（<3.0）** / jsonpath / openpyxl 3.1.5；85 条用例 `pytest --collect-only` 收集成功
-- **用例统计修正**：逐 YAML 核对后确认全量 **85 条**——用户管理实际 24 条（changeStatus 为 3 条，早期文档误写 25）
-- **README.md 编写**：项目介绍 + 85 条案例覆盖表 + 运行说明（conda 环境/依赖/config.ini/运行命令）
-- **仓库清理**：取消追踪 `data/runtime.yaml`（发现含真实 JWT token，已 gitignore）、`data/excel/*.xlsx`（测试产物）、`debug_edit.py`（临时调试）、`.vscode/`；补充 .gitignore
-- **project-startup.md 路径更新**：全部 D:\TestingFrame → E:\LearningMall\AutoFrame\Manu_Frame
-- **待办**：用户手动创建 `conf/config.ini`（真实凭据）→ 全量回归 → git commit + tag v1.0 + push
+- **换机器**：项目从 D:\TestingFrame 迁移到 E:\LearningMall\AutoFrame\Manu_Frame（git clone），若依源码/原框架在 `E:\LearningMall\AutoFrame\` 下
+- **环境搭建**：新建 conda env `testframe`（Python 3.12.9），安装全量依赖 + allure-pytest 2.16.0 + Allure CLI 2.43.0（npm）
+- **用例统计修正**：逐 YAML 核对后确认全量 **83 条**（移除连接冒烟后）= 登录 15 + 用户 24 + 角色 42 + Excel 1 + 业务流 1
+- **config.ini 引号陷阱**：`config.example.ini` 模板中 `host = http://"ip":8080` 导致用户替换后 ConfigParser 值含字面引号，已修复模板为 `<服务器IP>` 占位符
+- **README.md**：项目介绍 + 83 条案例覆盖表 + 运行说明 + 设计思路
+- **Allure 报告集成**（Tier 1/2/3）：epic/feature/story 导航树（7 个 conftest 钩子）+ 请求/响应附着（apiutil.py）+ 断言附着（assertions.py）+ `allure.dynamic.title()` 用 YAML case_name
+- **run.py**：一键全量回归 + 自动探测 `E:\Env\jdk*`（高版本优先）+ `allure generate` + `allure open`
+- **仓库清理**：取消追踪 `data/runtime.yaml`（发现含真实 JWT token）/ excel 产物 / debug_edit.py / .vscode / test_connect_api（纯基础设施）；补充 .gitignore
+- **MIT 许可证**：添加 LICENSE 文件
+- **git commit + push + tag v1.0** 已执行（3c9e8cd → ad22f46）
+- **Phase 6 规划**：确定使用 Jenkins（参考源框架），写入 Jenkinsfile + `utils/jenkins.py` + Docker 部署方案到 project-startup.md，工时预估 8-12h
