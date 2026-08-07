@@ -248,3 +248,235 @@ headers = self.replace_load(case_headers if case_headers else base_info["headers
 **原因**：之前检查的 Python 环境和 conda `testframe` 环境不同。openpyxl 3.1.0 在 base 环境，但 tests 在 `testframe` 中运行。
 
 **修复**：`conda run -n testframe pip install openpyxl`（v3.1.5）。
+
+
+---
+
+# Phase 6 CI/CD 踩坑记录
+
+## 15. Jenkins 最新稳定版要求 Java 21
+
+**现象**：Jenkins 启动报错：
+```
+Running with Java 17 from /usr/lib/jvm/java-17-openjdk-amd64,
+which is older than the minimum required version (Java 21).
+```
+
+**原因**：Jenkins 2.479+ 已将最低 Java 版本从 17 提升到 21。project-startup.md 和 setup-vm.sh 中的计划基于 Java 17，已过时。
+
+**修复**：`sudo apt install -y openjdk-21-jdk`，然后 `sudo update-alternatives --config java` 切换默认版本。
+
+---
+
+## 16. Jenkins 官方 apt 源在国内网络不可达 + 清华镜像不支持 apt 仓库格式
+
+**现象**：`pkg.jenkins.io` 的 GPG key 下载失败，清华 Jenkins 镜像 `mirrors.tuna.tsinghua.edu.cn/jenkins/debian-stable` 的 Release 文件 404。
+
+**原因**：
+- `pkg.jenkins.io` 被墙，GPG key 和 apt 源均不可达
+- 清华 Jenkins 镜像只提供 war 包直接下载，不提供 apt 仓库格式（无 Release 文件）
+
+**修复**：放弃 apt 安装。从清华镜像直接下载 war 包 + 手动创建 systemd 服务：
+```bash
+wget https://mirrors.tuna.tsinghua.edu.cn/jenkins/war-stable/latest/jenkins.war
+sudo mkdir -p /var/lib/jenkins
+sudo useradd -r -s /bin/false jenkins
+sudo chown -R jenkins:jenkins /var/lib/jenkins
+sudo mv jenkins.war /var/lib/jenkins/
+
+sudo tee /etc/systemd/system/jenkins.service > /dev/null << 'EOF'
+[Unit]
+Description=Jenkins CI
+After=network.target
+
+[Service]
+User=jenkins
+WorkingDirectory=/var/lib/jenkins
+Environment="JENKINS_HOME=/var/lib/jenkins"
+ExecStart=/usr/bin/java -Dhudson.plugins.git.GitSCM.ALLOW_LOCAL_CHECKOUT=true -Xmx256m -jar /var/lib/jenkins/jenkins.war --httpPort=9090
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+sudo systemctl daemon-reload
+sudo systemctl enable --now jenkins
+```
+
+关键：`ExecStart` 中 war 包必须放在 `jenkins` 用户有权访问的路径（`/var/lib/jenkins/`），不要放 `/home/aaa/`。
+
+---
+
+## 17. `jenkins` 用户没有家目录 → git config 报错
+
+**现象**：
+```
+error: could not lock config file /home/jenkins/.gitconfig: No such file or directory
+```
+
+**原因**：`useradd -r` 创建的系统用户没有家目录，`git config --global` 尝试写 `~/.gitconfig` 失败。
+
+**修复**：
+```bash
+sudo mkdir -p /home/jenkins
+sudo chown jenkins:jenkins /home/jenkins
+```
+
+---
+
+## 18. Jenkins `dir()` 步骤创建 `@tmp` → AccessDenied
+
+**现象**：
+```
+java.nio.file.AccessDeniedException: /home/aaa/ruoyi-testing-frame@tmp
+```
+
+**原因**：Jenkins Pipeline 的 `sh` 步骤由 Durable Task Plugin 实现，会在 `dir()` 指定的目录下创建 `@tmp` 子目录存放临时代码。`jenkins` 用户对 `/home/aaa/ruoyi-testing-frame` 无写权限 → 创建失败，整个 `sh` 步骤在脚本执行前就挂了。
+
+**修复**：不用 `dir()`，改为直接在 `sh` 中用 `cd` 切换目录。`@tmp` 将在 Jenkins workspace（`/var/lib/jenkins/workspace/`）下创建，`jenkins` 用户有写权限。
+
+---
+
+## 19. Git 所有权检测（dubious ownership）
+
+**现象**：
+```
+fatal: detected dubious ownership in repository at '/home/aaa/ruoyi-testing-frame'
+```
+
+**原因**：Git 2.35.2+ 安全特性——如果仓库所有者不是当前用户，拒绝操作。仓库属主是 `aaa`，Jenkins 以 `jenkins` 用户执行 `git pull`。
+
+**修复**：最终方案——不依赖 `/home/aaa/`。将项目复制到 `/var/lib/jenkins/ruoyi-testing-frame/`，`chown -R jenkins:jenkins`，Jenkins 用自己拥有的仓库。
+
+---
+
+## 20. `.venv` 复制后路径绑定失效 + 漏装 `jsonpath`
+
+**现象**：
+```
+ModuleNotFoundError: No module named 'jsonpath'
+```
+
+**原因**：
+- 原项目 `.venv` 在 `/home/aaa/ruoyi-testing-frame/.venv`，部分 Python 二进制硬编码了原路径
+- 依赖列表不全——`jsonpath` 在前期手工装过但从未写入任何 `requirements` 文件
+
+**修复**：删除旧 `.venv`，在 `/var/lib/jenkins/ruoyi-testing-frame/` 重建：
+```bash
+sudo -u jenkins uv venv --python 3.12
+sudo -u jenkins uv pip install \
+    -i https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple \
+    --trusted-host mirrors.tuna.tsinghua.edu.cn \
+    pytest allure-pytest "paramiko<3.0" pymysql redis sshtunnel pyyaml requests openpyxl jsonpath
+```
+
+---
+
+## 21. 项目缺少 `data/` 目录
+
+**现象**：`test_login.py` 首条用例 FAILED，日志报 `clear_runtime` → `FileNotFoundError: data/runtime.yaml`。
+
+**原因**：`data/runtime.yaml` 在 `.gitignore` 中排除，git clone 不创建 `data/` 空目录。首次运行时自动创建逻辑也不覆盖这种场景。
+
+**修复**：
+```bash
+sudo mkdir -p /var/lib/jenkins/ruoyi-testing-frame/data
+sudo chown jenkins:jenkins /var/lib/jenkins/ruoyi-testing-frame/data
+```
+
+---
+
+## 22. `config.ini` 复制时 IP 笔误
+
+**现象**：虚拟机 Jenkins 构建中 HTTP 请求打到了 `http://47.10.149.194:8080`（少了一个 `9`），ConnectionError。
+
+**原因**：config.ini 从 Windows 手工拷贝到虚拟机时键盘输入错误。云服务器真实 IP 是 `47.109.149.194`。
+
+**修复**：`sed -i 's/47\.10\.149\.194/47.109.149.194/g' config.ini`。
+
+**教训**：IP/密码等敏感信息要么用 Jenkins Credentials 注入，要么用 `diff` 对比 Windows 和 Linux 两端配置确认一致。
+
+---
+
+## 23. Jenkins Git Plugin 拒绝本地目录 checkout
+
+**现象**：
+```
+ERROR: Checkout of Git remote '/var/lib/jenkins/ruoyi-testing-frame/.git' aborted
+because it references a local directory, which may be insecure.
+```
+
+**原因**：Jenkins Git Plugin 默认禁止本地文件系统路径作为 remote URL，避免安全风险。
+
+**修复**：在 `jenkins.service` 的 `ExecStart` 添加 JVM 参数（注意是 `java` 启动参数，不是 `JAVA_OPTS` 环境变量）：
+```
+-Dhudson.plugins.git.GitSCM.ALLOW_LOCAL_CHECKOUT=true
+```
+坑：写到 `Environment="JAVA_OPTS=..."` 不生效——因为 systemd 服务用的是 `ExecStart=/usr/bin/java -jar ...`，`JAVA_OPTS` 环境变量不会被 java 命令自动读取。必须把参数直接加在 `-jar` 前面。
+
+---
+
+## 24. Allure 未在虚拟机上安装
+
+**现象**：`sh: allure: not found`。
+
+**原因**：前期 Jenkins 安装问题频出，Allure 安装步骤被跳过。后因 GitHub 被墙，下载也受阻。
+
+**修复**：
+- 方案 A（代理）：`export https_proxy=http://宿主机IP:7897 && wget https://github.com/...`
+- 方案 B（手动）：Windows 下载 `allure-2.32.0.tgz` → Xftp 传到虚拟机 → `sudo tar -xzf ~/allure-2.32.0.tgz -C /opt/ && sudo ln -sf /opt/allure-2.32.0/bin/allure /usr/local/bin/allure`
+
+npm 的 `allure-commandline` 包内部 dist/ 解压也需要同样处理，无实质区别。
+
+---
+
+## 25. Allure Jenkins Plugin 不适用于本场景
+
+**现象**：安装 Allure Jenkins Plugin 后，Pipeline 构建侧边栏无 "Allure Report" 链接。
+
+**排查**：
+- Plugin 已安装、Global Tool 已配 `/opt/allure-2.32.0`
+- Pipeline `post` 中已用 `allure` 步骤
+- Freestyle 项目也试过 `Publish Allure Report` post-build action
+
+仍未解决。最终放弃插件方式。
+
+**当前方案**：Jenkins `post` 中保留 `sh 'allure generate ...'`，手动用 `python3 -m http.server 8088` 查看报告。后续可考虑用 Jenkins `publishHTML` 插件替代，或把 `allure open` 改为 `allure serve` 的 nohup 模式。
+
+---
+
+## 26. `allure generate` 文件权限冲突
+
+**现象**：`aaa` 用户执行 `allure generate` 时报 `AccessDeniedException: report/allure/history/retry-trend.json`。
+
+**原因**：Jenkins 构建以 `jenkins` 用户运行，生成的 `report/allure/` 文件属主为 `jenkins:jenkins`。`aaa` 用户无写权限，无法覆盖 history 趋势文件。
+
+**修复**：
+```bash
+sudo chown -R aaa:aaa /var/lib/jenkins/ruoyi-testing-frame/report
+# 或
+sudo chmod -R 777 /var/lib/jenkins/ruoyi-testing-frame/report
+```
+
+---
+
+## Phase 6 环境总览（最终可用状态）
+
+```
+虚拟机 Ubuntu 22.04 (192.168.119.144)
+├── Jenkins         /var/lib/jenkins/jenkins.war  :9090  (java 21)
+├── 项目            /var/lib/jenkins/ruoyi-testing-frame/  (jenkins:jenkins)
+├── Python 3.12     uv venv (.venv)
+├── Allure          /opt/allure-2.32.0/
+└── 防火墙          22/tcp, 9090/tcp, 8088/tcp
+
+Jenkins Pipeline Job（Script 模式，手动粘贴 Jenkinsfile）
+  Stage 1. 登录测试       → 15 条
+  Stage 2. 用户管理       → 24 条
+  Stage 3. 角色权限       → 42 条
+  Stage 4. 文件与业务流    →  2 条
+  总计                    83 条
+
+Allure 报告          手动生成 + python3 -m http.server 8088
+```
