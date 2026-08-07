@@ -34,11 +34,11 @@ echo ">>> [2/7] 安装 Java 17..."
 sudo apt install -y openjdk-17-jdk
 java -version
 
-# ── 3. Jenkins（清华镜像） ──
+# ── 3. Jenkins（官方源，清华无 apt 镜像） ──
 echo ""
-echo ">>> [3/7] 安装 Jenkins（端口 ${JENKINS_PORT}，清华镜像）..."
-curl -fsSL "${TUNA}/jenkins/debian-stable/jenkins.io-2023.key" | sudo tee /usr/share/keyrings/jenkins-keyring.asc > /dev/null
-echo "deb [signed-by=/usr/share/keyrings/jenkins-keyring.asc] ${TUNA}/jenkins/debian-stable binary/" | sudo tee /etc/apt/sources.list.d/jenkins.list > /dev/null
+echo ">>> [3/7] 安装 Jenkins（端口 ${JENKINS_PORT}）..."
+curl -fsSL https://pkg.jenkins.io/debian-stable/jenkins.io-2023.key | sudo tee /usr/share/keyrings/jenkins-keyring.asc > /dev/null
+echo "deb [signed-by=/usr/share/keyrings/jenkins-keyring.asc] https://pkg.jenkins.io/debian-stable binary/" | sudo tee /etc/apt/sources.list.d/jenkins.list > /dev/null
 sudo apt update -y && sudo apt install -y jenkins
 
 # 修改端口为 9090（避免与云服务器 8080 冲突）
