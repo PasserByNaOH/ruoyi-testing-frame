@@ -1,5 +1,10 @@
 pipeline {
-    agent any
+    agent {
+        node {
+            label 'built-in'
+            customWorkspace '/var/lib/jenkins/ruoyi-testing-frame'
+        }
+    }
 
     environment {
         JAVA_TOOL_OPTIONS = '-Dfile.encoding=UTF-8'
@@ -58,11 +63,7 @@ pipeline {
 
     post {
         always {
-            sh '''
-                cd /var/lib/jenkins/ruoyi-testing-frame
-                allure generate report/temp -o report/allure --clean
-            '''
-            archiveArtifacts artifacts: '/var/lib/jenkins/ruoyi-testing-frame/report/allure/**', allowEmptyArchive: true
+            allure includeProperties: false, results: [[path: 'report/temp']]
             script {
                 def buildResult = currentBuild.result ?: 'SUCCESS'
                 echo "构建结果: ${buildResult}"
