@@ -7,25 +7,10 @@ pipeline {
 
     stages {
 
-        // ── 0. 准备环境 ──
-        stage('0. 环境准备') {
-            steps {
-                sh '''
-                    # 若项目目录已存在，只做 git pull
-                    if [ -d /home/aaa/ruoyi-testing-frame ]; then
-                        cd /home/aaa/ruoyi-testing-frame && git pull
-                    else
-                        git clone https://github.com/PasserByNaOH/ruoyi-testing-frame.git /home/aaa/ruoyi-testing-frame
-                    fi
-                '''
-            }
-        }
-
-        // ── 1. 登录测试 ──
         stage('1. 登录测试') {
             steps {
                 sh '''
-                    cd /home/aaa/ruoyi-testing-frame
+                    cd /var/lib/jenkins/ruoyi-testing-frame
                     uv run pytest test_runner/test_login/ \
                         --alluredir=report/temp \
                         --clean-alluredir \
@@ -34,17 +19,54 @@ pipeline {
             }
         }
 
-        // TODO: Stage 2 ~ 4 后续逐步添加
+        stage('2. 用户管理') {
+            steps {
+                sh '''
+                    cd /var/lib/jenkins/ruoyi-testing-frame
+                    uv run pytest test_runner/test_user/ \
+                        --alluredir=report/temp \
+                        -v
+                '''
+            }
+        }
+
+        stage('3. 角色权限') {
+            steps {
+                sh '''
+                    cd /var/lib/jenkins/ruoyi-testing-frame
+                    uv run pytest test_runner/test_role/ \
+                        --alluredir=report/temp \
+                        -v
+                '''
+            }
+        }
+
+        stage('4. 文件与业务流') {
+            steps {
+                sh '''
+                    cd /var/lib/jenkins/ruoyi-testing-frame
+                    uv run pytest \
+                        test_runner/test_user_excel/ \
+                        test_runner/test_business/ \
+                        --alluredir=report/temp \
+                        -v
+                '''
+            }
+        }
 
     }
 
     post {
         always {
             sh '''
-                cd /home/aaa/ruoyi-testing-frame
+                cd /var/lib/jenkins/ruoyi-testing-frame
                 allure generate report/temp -o report/allure --clean
             '''
-            archiveArtifacts artifacts: '/home/aaa/ruoyi-testing-frame/report/allure/**', allowEmptyArchive: true
+            archiveArtifacts artifacts: '/var/lib/jenkins/ruoyi-testing-frame/report/allure/**', allowEmptyArchive: true
+            script {
+                def buildResult = currentBuild.result ?: 'SUCCESS'
+                echo "构建结果: ${buildResult}"
+            }
         }
     }
 }
