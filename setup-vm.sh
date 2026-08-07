@@ -19,6 +19,8 @@ echo "=========================================="
 # ── 0. 替换 APT 源为清华镜像 ──
 echo ""
 echo ">>> [0/6] 替换 APT 源为清华镜像..."
+# 清理上次可能残留的错误 jenkins 源文件
+sudo rm -f /etc/apt/sources.list.d/jenkins.list
 sudo sed -i "s@http://.*archive.ubuntu.com@https://mirrors.tuna.tsinghua.edu.cn@g" /etc/apt/sources.list
 sudo sed -i "s@http://.*security.ubuntu.com@https://mirrors.tuna.tsinghua.edu.cn@g" /etc/apt/sources.list
 sudo apt update -y
