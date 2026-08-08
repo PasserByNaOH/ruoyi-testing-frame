@@ -283,9 +283,9 @@ if __name__ == '__main__':
     elif args.action == 'dingtalk-test':
         dt = DingTalkNotifier()
         ok = dt.send(
-            title="🧪 钉钉通知测试",
+            title="🧪 钉钉通知测试 — 构建连通性验证",
             text=(
-                "### 🧪 钉钉通知测试\n\n"
+                "### 🧪 钉钉通知测试 — 构建连通性验证\n\n"
                 "如果你看到这条消息，说明钉钉机器人配置成功。\n\n"
                 "- 来源: `utils/jenkins.py`\n"
                 "- 时间: 本地手动触发"
