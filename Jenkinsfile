@@ -6,6 +6,10 @@ pipeline {
         }
     }
 
+    options {
+        skipDefaultCheckout()  // 禁止自动 SCM checkout，项目已在 customWorkspace 中
+    }
+
     environment {
         JAVA_TOOL_OPTIONS = '-Dfile.encoding=UTF-8'
         // 钉钉机器人 Webhook URL（Jenkins → Manage Jenkins → Credentials → Secret text）
