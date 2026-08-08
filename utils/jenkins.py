@@ -152,15 +152,143 @@ class JenkinsClient:
 # 命令行入口（python -m utils.jenkins）
 # ═══════════════════════════════════════════════════════
 
+class DingTalkNotifier:
+    """钉钉机器人通知 —— 供 Jenkins pipeline 和本地脚本共用。
+
+    用法：
+        from utils.jenkins import DingTalkNotifier
+        dt = DingTalkNotifier()
+        dt.send(title="构建完成", text="83/83 通过")
+    """
+
+    def __init__(self):
+        cf = ConfigParser()
+        cf.read(FILE_PATH['CONFIG'], encoding='utf-8')
+        self._webhook = cf.get('DINGTALK', 'webhook', fallback='')
+        self._secret  = cf.get('DINGTALK', 'secret', fallback='')
+
+    def send(self, title: str, text: str) -> bool:
+        """发送 Markdown 消息到钉钉群。
+
+        Args:
+            title: 消息标题（显示在通知横幅）
+            text:  Markdown 正文
+
+        Returns:
+            True 发送成功，False 失败
+        """
+        import json
+        import urllib.request
+
+        if not self._webhook or '你的access_token' in self._webhook:
+            print("[DingTalk] webhook 未配置，跳过通知", file=sys.stderr)
+            return False
+
+        payload = {
+            "msgtype": "markdown",
+            "markdown": {
+                "title": title,
+                "text": text,
+            },
+        }
+
+        try:
+            data = json.dumps(payload).encode('utf-8')
+            req = urllib.request.Request(
+                url=self._webhook,
+                data=data,
+                headers={'Content-Type': 'application/json; charset=utf-8'},
+                method='POST',
+            )
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                result = json.loads(resp.read().decode('utf-8'))
+            if result.get('errcode') == 0:
+                print(f"[DingTalk] 通知已发送: {title}")
+                return True
+            else:
+                print(f"[DingTalk] 发送失败: {result}", file=sys.stderr)
+                return False
+        except Exception as e:
+            print(f"[DingTalk] 发送异常: {e}", file=sys.stderr)
+            return False
+
+    def send_build_success(self, build_number: int, build_url: str,
+                           duration: str = '', stats: dict = None) -> bool:
+        """发送构建成功通知（预设模板）。"""
+        lines = [
+            '### ✅ 若依测试框架 - 构建成功',
+            '',
+        ]
+        if stats:
+            total = stats.get('total', '?')
+            passed = stats.get('pass_count', '?')
+            failed = stats.get('fail_count', '?')
+            lines.append(f'> {total} 条用例 | 通过 {passed} | 失败 {failed}')
+        else:
+            lines.append('> 83 条用例全量通过')
+        lines += [
+            '',
+            f'| 项目 | 内容 |',
+            f'|------|------|',
+            f'| 构建编号 | #{build_number} |',
+            f'| 耗时 | {duration} |' if duration else '',
+            f'| [Jenkins 页面]({build_url}) | 点击查看 |',
+        ]
+        return self.send(title=f"✅ 构建成功 - #{build_number}",
+                         text='\n'.join(filter(None, lines)))
+
+    def send_build_failure(self, build_number: int, build_url: str,
+                           duration: str = '', reason: str = '') -> bool:
+        """发送构建失败通知（预设模板）。"""
+        lines = [
+            '### ❌ 若依测试框架 - 构建失败',
+            '',
+            f'> {reason}' if reason else '> 请检查控制台日志',
+            '',
+            f'| 项目 | 内容 |',
+            f'|------|------|',
+            f'| 构建编号 | #{build_number} |',
+            f'| 耗时 | {duration} |' if duration else '',
+            f'| [控制台日志]({build_url}console) | 点击查看 |',
+        ]
+        return self.send(title=f"❌ 构建失败 - #{build_number}",
+                         text='\n'.join(filter(None, lines)))
+
+
+# ═══════════════════════════════════════════════════════
+# 命令行入口
+# ═══════════════════════════════════════════════════════
+
 if __name__ == '__main__':
-    try:
-        jk = JenkinsClient()
-        summary = jk.build_info_summary()
-        print("=" * 50)
-        print("Jenkins 构建摘要")
-        print("=" * 50)
-        for key, value in summary.items():
-            print(f"  {key}: {value}")
-    except Exception as e:
-        print(f"Error: {e}", file=sys.stderr)
-        sys.exit(1)
+    import argparse
+
+    ap = argparse.ArgumentParser(description='Jenkins / 钉钉通知 工具')
+    ap.add_argument('action', choices=['jenkins', 'dingtalk-test'],
+                    help='jenkins: 查询构建摘要 | dingtalk-test: 测试钉钉连通性')
+    args = ap.parse_args()
+
+    if args.action == 'jenkins':
+        try:
+            jk = JenkinsClient()
+            summary = jk.build_info_summary()
+            print("=" * 50)
+            print("Jenkins 构建摘要")
+            print("=" * 50)
+            for key, value in summary.items():
+                print(f"  {key}: {value}")
+        except Exception as e:
+            print(f"Error: {e}", file=sys.stderr)
+            sys.exit(1)
+
+    elif args.action == 'dingtalk-test':
+        dt = DingTalkNotifier()
+        ok = dt.send(
+            title="🧪 钉钉通知测试",
+            text=(
+                "### 🧪 钉钉通知测试\n\n"
+                "如果你看到这条消息，说明钉钉机器人配置成功。\n\n"
+                "- 来源: `utils/jenkins.py`\n"
+                "- 时间: 本地手动触发"
+            ),
+        )
+        sys.exit(0 if ok else 1)

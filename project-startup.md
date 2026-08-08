@@ -1,8 +1,8 @@
 ---
 project: ruoyi-testing-frame
 description: 项目启动文档——每开新对话时首先阅读此文件
-last_updated: 2026-08-06
-current_phase: Phase 5 完成 → v1.0 发布 → 规划 Phase 6 CI/CD
+last_updated: 2026-08-07
+current_phase: Phase 6 完成 → v1.1 发布 → 项目完结
 ---
 
 # 若依测试框架改造 · 项目启动文档
@@ -435,71 +435,143 @@ ruoyi-testing-frame/              ← GitHub 仓库根目录
 
 ---
 
-### Phase 6 · CI/CD（Jenkins 集成）
+### Phase 6 · CI/CD（Jenkins 集成）✅ 完成
 
-**目标**：Jenkins 自动化构建 + Allure 报告归档 + 定时执行
+**目标**：Jenkins 自动化构建 + Allure 报告归档 + Pipeline as Code
 
-**参考源框架**：
-- 源框架使用 `python-jenkins` 库查询 Jenkins 构建状态、测试报告、控制台日志（`common/Pjenkins.py`）
-- Jenkins Job 配置：拉代码 → `python run.py` → 归档 Allure 报告 → 邮件通知
-- 源框架没有 Jenkinsfile（Pipeline as Code），CI 流程依赖 Jenkins 管理端手工配置
-
-**计划实现**：
+**实际实现**：
 
 ```
-├── Jenkinsfile                    → Pipeline as Code（拉代码 → 安装依赖 → 跑全量 → 归档报告）
-├── utils/jenkins.py              → Jenkins API 封装（查询构建状态 / 获取测试报告统计）
-├── conf/config.ini 追加节          → [JENKINS] url / username / password / job_name
-├── pyproject.toml                 → 依赖管理（添加 python-jenkins）
-└── .github/                       → 不创建（Phase 6 只做 Jenkins）
+新增/修改：
+  ├── Jenkinsfile                    → Declarative Pipeline（4 阶段：登录/用户/角色/文件与业务流）
+  ├── utils/jenkins.py              → Jenkins API 封装（python-jenkins 库）
+  │                                   get_build_status / get_report_stats / build_info_summary
+  ├── setup-vm.sh                    → Ubuntu 22.04 VM 一键部署脚本（Java 21 + Jenkins war + uv + Allure）
+  ├── conf/config.example.ini         → 新增 [JENKINS] 节（url/username/password/job_name）
+  └── problem.md                      → 新增 §15-§26（12 个 Phase 6 踩坑记录）
 ```
 
-**学习任务**：
-1. 本地 Docker 部署 Jenkins，配置 Allure 插件
-2. 编写 Jenkinsfile（Declarative Pipeline）：Checkout → conda 环境 → pytest → allure generate → 归档
-3. 编写 `utils/jenkins.py`：封装 python-jenkins，提供 `get_build_status()` / `get_report_stats()`
-4. 配置定时构建（H 2 * * *，每天凌晨 2 点）+ 邮件/钉钉通知
+**部署架构**：
 
-**Jenkinsfile 核心步骤**：
+```
+Windows 开发机                      GitHub                         VMware Ubuntu 22.04 VM
+┌─────────────────┐     push       ┌──────────┐     git pull       ┌──────────────────────────┐
+│  ruoyi-testing-  │ ────────────→ │ 公开仓库  │ ←─────────────── │  Jenkins                  │
+│  frame (VS Code) │               └──────────┘                   │  ├─ war 包（9090 端口）    │
+│  ├─ 编写用例     │                                               │  ├─ uv 管理 Python 依赖    │
+│  ├─ git commit   │                                               │  ├─ Allure CLI 2.32.0      │
+│  └─ git push     │                                               │  ├─ SSH 隧道 → 云服务器     │
+└─────────────────┘                                               │  │   (Redis + MySQL)        │
+                                                                  │  └─ Pipeline Job           │
+                                                                  │      ├─ Stage 1: 登录 15 条│
+云服务器 47.109.149.194                                           │      ├─ Stage 2: 用户 24 条│
+┌─────────────────────────┐                                       │      ├─ Stage 3: 角色 42 条│
+│  RuoYi-Vue :8080        │ ←── SSH 隧道 ─────────────────────── │      └─ Stage 4: 文件+业务  │
+│  MySQL Docker :3306     │                                         │            2 条             │
+│  Redis Docker :6379     │                                         └──────────────────────────┘
+└─────────────────────────┘
+```
+
+**Jenkinsfile 最终版本**（Declarative Pipeline + customWorkspace）：
+
 ```groovy
 pipeline {
-    agent any
-    triggers { cron('H 2 * * *') }
+    agent {
+        node {
+            label 'built-in'
+            customWorkspace '/var/lib/jenkins/ruoyi-testing-frame'
+        }
+    }
+    environment {
+        JAVA_TOOL_OPTIONS = '-Dfile.encoding=UTF-8'
+    }
     stages {
-        stage('Checkout')   { steps { git '...' } }
-        stage('Install')    { steps { sh 'pip install ...' } }
-        stage('Test')       { steps { sh 'python -m pytest --alluredir=report/temp --clean-alluredir' } }
-        stage('Report')     { steps { allure includeProperties: false, results: [[path: 'report/temp']] } }
+        stage('1. 登录测试') {
+            steps {
+                sh '''
+                    cd /var/lib/jenkins/ruoyi-testing-frame
+                    uv run pytest test_runner/test_login/ \
+                        --alluredir=report/temp --clean-alluredir -v
+                '''
+            }
+        }
+        stage('2. 用户管理') {
+            steps {
+                sh '''
+                    cd /var/lib/jenkins/ruoyi-testing-frame
+                    uv run pytest test_runner/test_user/ --alluredir=report/temp -v
+                '''
+            }
+        }
+        stage('3. 角色权限') {
+            steps {
+                sh '''
+                    cd /var/lib/jenkins/ruoyi-testing-frame
+                    uv run pytest test_runner/test_role/ --alluredir=report/temp -v
+                '''
+            }
+        }
+        stage('4. 文件与业务流') {
+            steps {
+                sh '''
+                    cd /var/lib/jenkins/ruoyi-testing-frame
+                    uv run pytest test_runner/test_user_excel/ \
+                        test_runner/test_business/ --alluredir=report/temp -v
+                '''
+            }
+        }
     }
     post {
-        always { allure includeProperties: false, results: [[path: 'report/temp']] }
-        success { emailext ... }
-        failure { emailext ... }
+        always {
+            allure includeProperties: false, results: [[path: 'report/temp']]
+            script {
+                def buildResult = currentBuild.result ?: 'SUCCESS'
+                echo "构建结果: ${buildResult}"
+            }
+        }
     }
 }
 ```
 
 **区别于源框架的改进**：
 - 用 Jenkinsfile（Pipeline as Code）替代手工配置，CI 流程版本可控
-- 用 `conda run -n testframe` 隔离 Python 环境
-- 源框架的 `Pjenkins.py` 仅查询构建结果，我们的 `utils/jenkins.py` 扩展为：查询 + 触发构建 + 获取 Allure 报告链接
+- 用 `uv` 替代 conda 管理 VM 上的 Python 依赖（更轻量，无需 conda 镜像）
+- `utils/jenkins.py` 扩展为：查询状态 + 测试报告统计 + 控制台日志 + Allure 链接提取
+- 4 阶段分离构建，便于定位失败阶段
+- `customWorkspace` 解决 Pipeline 的 Allure 插件路径问题
 
-**工时**：8-12h（含 Jenkins 学习 + Docker 部署 + 调试）
+**Jenkins 环境信息**（最终）：
+| 项目 | 值 |
+|------|-----|
+| 宿主机 | Windows 11 + VMware Workstation |
+| VM 系统 | Ubuntu 22.04.5 LTS |
+| VM IP | 192.168.119.144 |
+| Jenkins 端口 | :9090 |
+| Jenkins 版本 | 2.548（2026-08） |
+| Java | OpenJDK 21.0.9 |
+| Python | 3.12（uv 管理 .venv） |
+| Allure CLI | 2.32.0 |
+| 项目路径 | `/var/lib/jenkins/ruoyi-testing-frame/` |
+| 登录凭据 | admin / admin |
+
+**踩坑记录**：见 `problem.md` §15-§26（12 个问题：Jenkins apt 镜像失败 / Java 21 升级 / war 部署 / git 权限 / uv PATH / Allure 安装 / workspace 路径不匹配 等）
+
+**工时**：~16h（含 CI/CD 概念学习 + VM 部署 + Jenkins 调试 + 83 条用例跑通 + 文档编写）
 
 ---
 
 ### 总预估
 
 ```
-Phase 0  ████████████████████ ✅ 100%  完成
-Phase 1  ████████████████████ ✅ 100%   SSH + conftest          4-6h
+Phase 0  ████████████████████ ✅ 100%  项目初始化
+Phase 1  ████████████████████ ✅ 100%  SSH + conftest            4-6h
 Phase 2  ████████████████████ ✅ 100%  登录 15 案例              ~10h
-Phase 3  ████████████████████ ✅ 100%  用户 CRUD 25 案例        ~10h
+Phase 3  ████████████████████ ✅ 100%  用户 CRUD 24 案例        ~10h
 Phase 4  ████████████████████ ✅ A+B 完成                    ~16h
 Phase 5  ████████████████████ ✅ 100%  收尾                     3-4h
-Phase 6  ░░░░░░░░░░░░░░░░░░░░   0%    Jenkins CI/CD             8-12h
+Phase 6  ████████████████████ ✅ 100%  Jenkins CI/CD            ~16h
 ──────────────────────────────────────────────────────
-合计                                           53-66h（约 14-17 天）
+合计                                           62-69h（约 16-18 天）
 ```
 
 > **案例来源**：手动测试笔记 `C:\Users\PasserByNaOH\Desktop\实习学习笔记\笔记\Ruoyi\Vue\` 中的 ~35 条案例（B2 登录 / C1 用户管理 / D 角色管理 / C2 部门岗位 + 导出 / E 独立模块），框架目标是复现这些手动案例。
@@ -516,7 +588,7 @@ master ────────────────────────�
   ├── feature/phase4-role-permission ──→ merge（Phase 4 角色权限）
   ├── feature/phase4-excel-import-export ──→ merge（Phase 4 Excel）
   ├── tag v1.0（Phase 5 收尾：README + Allure + 清理）
-  └── feature/phase6-jenkins ──（规划中）
+  └── Phase 6 Jenkins CI/CD（直接在 master 开发，commit 5498e65）
 ```
 
 ### 决策规则
@@ -561,6 +633,11 @@ master ────────────────────────�
 31. **导入导出不直接比对 Excel** — 导入 7 列 vs 导出 11 列，列头不同。比对策略：对 6 个共有字段逐行匹配，deptId 查 DB 转 deptName 后比对
 32. **Excel 文件落盘 data/excel/** — 导入文件和导出结果都保存到磁盘，方便人工打开检查调试
 33. **业务流程 steps 串行模式** — YAML 中 `steps` 列表定义多步操作，test 函数遍历执行。步骤间通过 `extract` → runtime.yaml → `${get_runtime(key)}` 串联数据，和原框架 `extract.yaml` 模式等价。不另写引擎，完全复用 `specification_yaml` + `replace_load` + `extract_data`
+34. **Jenkins Declarative Pipeline + customWorkspace** — 用 `customWorkspace` 让 Jenkins workspace 指向项目实际目录（`/var/lib/jenkins/ruoyi-testing-frame/`），解决 `allure` 步骤路径相对于默认 workspace 找不到报告的问题。Pipeline 和 Freestyle 两种模式均适用
+35. **uv 替代 conda 于 VM** — Ubuntu VM 上使用 uv 管理 Python 依赖，`/usr/local/bin/uv` 软链接解决 jenkins 用户 PATH 不包含 `~/.local/bin` 的问题
+36. **Jenkins war 包部署** — 因清华镜像的 Jenkins apt 源不兼容，改用 `jenkins.war` 直接下载 + systemd 服务启动，`JAVA_OPTS` 环境变量无效，`-Dhudson.plugins.git.GitSCM.ALLOW_LOCAL_CHECKOUT=true` 需直接写在 `ExecStart` 中
+37. **jenkins 用户权限模型** — Jenkins 服务以 `jenkins` 用户运行，项目目录需 `chown -R jenkins:jenkins`；jenkins 用户需 home 目录（`/home/jenkins`）以执行 `git config --global`；Allure 报告文件属主冲突（jenkins 写 → aaa 无写权限）需 `chown -R aaa:aaa report/`
+38. **SCM 本地路径安全限制** — Jenkins Git Plugin 默认禁止本地路径 checkout（安全策略）。VM 上的工作流改为：Windows git push → GitHub → VM git pull → Jenkins "Build Now"（不通过 Git Plugin 拉取，直接执行 shell）
 
 ---
 
@@ -601,6 +678,11 @@ master ────────────────────────�
 | `TypeError: not enough arguments for format string` | `cursor.execute(sql, ())` 空tuple导致SQL中`%`被当格式符 | 无参数时不传第二参：`if params: cursor.execute(sql, params) else: cursor.execute(sql)` |
 | DB 验证查询不到更新后的数据 | `autocommit=False` + REPEATABLE READ 快照 | `pymysql.connect(..., autocommit=True)` |
 | YAML `where: {user_id: ${...}}` 解析报错 | `${` 在 YAML 流映射 `{}` 中触发解析歧义 | 值用双引号包裹：`"${get_runtime(created_user_id)}"` |
+| Jenkins `allure` 步骤不显示报告 | workspace 路径 ≠ 项目路径，`allure` results 相对于 workspace | `customWorkspace` 指向项目目录 |
+| Jenkins `uv: not found` | jenkins 用户 PATH 不含 `~/.local/bin` | `sudo ln -sf /home/aaa/.local/bin/uv /usr/local/bin/uv` |
+| Jenkins 构建后 `report/` 文件属主冲突 | jenkins 用户写的报告文件 aaa 无法覆盖 | `sudo chown -R aaa:aaa report/` |
+| Jenkins war 服务 `JAVA_OPTS` 不生效 | systemd 的 `Environment=` 对 Jenkins war 无效 | JVM 参数直接写在 `ExecStart` 中 |
+| Jenkins `git config --global` 失败 | jenkins 用户无 home 目录 | `sudo mkdir -p /home/jenkins && sudo chown jenkins:jenkins /home/jenkins` |
 
 ### 6.5 Phase 切换约定
 
@@ -753,3 +835,21 @@ master ────────────────────────�
 - **MIT 许可证**：添加 LICENSE 文件
 - **git commit + push + tag v1.0** 已执行（3c9e8cd → ad22f46）
 - **Phase 6 规划**：确定使用 Jenkins（参考源框架），写入 Jenkinsfile + `utils/jenkins.py` + Docker 部署方案到 project-startup.md，工时预估 8-12h
+
+### 2026-08-06~07 — Phase 6 完成
+
+- **CI/CD 概念学习**：CI（持续集成）— 每次代码变更自动测试验证旧功能不被破坏；CD（持续交付/部署）— CI 通过后自动打包部署。从开发和测试两个视角理解了完整流程
+- **Jenkins 部署（VMware Ubuntu 22.04）**：非 Docker 部署，直接 `jenkins.war` + systemd 启动在 9090 端口
+- **清华镜像 Jenkins apt 不可用**：GPG key 404，改用 war 包下载 + 手动创建 systemd 服务
+- **Java 17→21 升级**：最新 Jenkins 2.548 要求 Java 21，`sudo apt install openjdk-21-jdk`
+- **uv 替代 conda**：VM 上使用 uv 管理 Python 依赖（`uv pip install -r requirements.txt`），解决 jenkins 用户 PATH 不含 `~/.local/bin` 问题
+- **jenkins 用户权限体系**：Jenkins 服务以 `jenkins` 用户运行，项目目录需 `chown`；home 目录需手动创建；Allure 报告写权限冲突
+- **git 本地 checkout 安全限制**：Jenkins Git Plugin 禁止本地路径 → 添加 `-Dhudson.plugins.git.GitSCM.ALLOW_LOCAL_CHECKOUT=true` → 参数进 `ExecStart` 非 `JAVA_OPTS`（后者不生效）
+- **工作流**：Windows dev → git push GitHub → VM git pull → Jenkins "Build Now"
+- **Jenkinsfile**：Declarative Pipeline，4 阶段分离（登录 15 → 用户 24 → 角色 42 → 文件+业务 2），`customWorkspace` 解决 Allure 路径问题
+- **Allure 插件路径之谜（核心踩坑）**：Pipeline `allure` 步骤不显示报告 → 排查发现 workspace ≠ 项目目录 → `customWorkspace '/var/lib/jenkins/ruoyi-testing-frame'` 修复；Freestyle 用 "Use custom workspace" 同理
+- **Problem #25 更新**：从"放弃插件"纠正为 workspace 路径不匹配 + customWorkspace 解法
+- **`utils/jenkins.py`**：`JenkinsClient` 类，延迟初始化避免 import 报错，提供 `get_build_status` / `get_report_stats` / `extract_allure_url` / `build_info_summary`
+- **83 条用例全量 4 阶段全部通过**，Allure 报告在 Jenkins 侧边栏正常显示
+- **project-startup.md + problem.md 已同步**（Phase 6 完成状态，12 个踩坑记录）
+- **git commit + push 已执行**（5498e65）

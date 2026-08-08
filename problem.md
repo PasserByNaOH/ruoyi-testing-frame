@@ -431,18 +431,59 @@ npm 的 `allure-commandline` 包内部 dist/ 解压也需要同样处理，无�
 
 ---
 
-## 25. Allure Jenkins Plugin 不适用于本场景
+## 25. Pipeline `allure` 步骤不显示报告 → workspace 路径不匹配
 
-**现象**：安装 Allure Jenkins Plugin 后，Pipeline 构建侧边栏无 "Allure Report" 链接。
+**现象**：
+- Allure Jenkins Plugin 已安装、Global Tool 已配 `/opt/allure-2.32.0`
+- Pipeline `post` 中已写 `allure includeProperties: false, results: [[path: 'report/temp']]`
+- Jenkins 构建日志显示 `allure` 步骤执行成功
+- 但构建侧边栏始终没有 **Allure Report** 链接
+- Freestyle 项目中 `Publish Allure Report` post-build action 同样无报告
 
-**排查**：
-- Plugin 已安装、Global Tool 已配 `/opt/allure-2.32.0`
-- Pipeline `post` 中已用 `allure` 步骤
-- Freestyle 项目也试过 `Publish Allure Report` post-build action
+**排查过程**：
+1. 检查 `report/temp` 目录——数据存在（880 个 JSON 文件），排除 pytest 未生成数据
+2. 尝试 Freestyle 的 `Publish Allure Report` ——仍然不显示，排除 Pipeline 语法问题
+3. 手动 `allure generate report/temp` + `http.server` ——报告可正常查看，排除 Allure 工具本身问题
+4. 检查 Jenkins workspace——`/var/lib/jenkins/workspace/ruoyi-testing-frame/` 下是空的，**没有 `report/temp`**
 
-仍未解决。最终放弃插件方式。
+**根因**：Jenkins Pipeline 默认 workspace 和实际项目目录是**两个不同路径**：
 
-**当前方案**：Jenkins `post` 中保留 `sh 'allure generate ...'`，手动用 `python3 -m http.server 8088` 查看报告。后续可考虑用 Jenkins `publishHTML` 插件替代，或把 `allure open` 改为 `allure serve` 的 nohup 模式。
+```
+默认 workspace：  /var/lib/jenkins/workspace/ruoyi-testing-frame/   ← 空的
+项目实际路径：    /var/lib/jenkins/ruoyi-testing-frame/              ← 代码 + report/temp 在这里
+```
+
+`allure` 步骤中的 `results: [[path: 'report/temp']]` 是相对于 **workspace** 的路径，在默认 workspace 下找不到 → 无报告。
+
+**修复**：让 workspace 指向项目目录。
+
+Pipeline 方式（Jenkinsfile）：
+```groovy
+pipeline {
+    agent {
+        node {
+            label 'built-in'
+            customWorkspace '/var/lib/jenkins/ruoyi-testing-frame'
+        }
+    }
+    ...
+    post {
+        always {
+            allure includeProperties: false, results: [[path: 'report/temp']]
+        }
+    }
+}
+```
+
+Freestyle 方式（UI 配置）：
+```
+General → 高级 → ✅ Use custom workspace → /var/lib/jenkins/ruoyi-testing-frame
+Post-build Actions → Allure Report → Results: report/temp
+```
+
+修复后 Pipeline 和 Freestyle 两种模式均正常显示 Allure Report 链接。
+
+**关键认知**：Jenkins 的几乎所有路径（`sh` 工作目录、`allure` results 路径、`archiveArtifacts` 路径）都相对于 workspace。如果项目不在标准 workspace 下，要么用 `customWorkspace`，要么所有路径写绝对路径。
 
 ---
 
