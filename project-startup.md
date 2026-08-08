@@ -1,8 +1,8 @@
 ---
 project: ruoyi-testing-frame
 description: 项目启动文档——每开新对话时首先阅读此文件
-last_updated: 2026-08-07
-current_phase: Phase 6 完成 → v1.1 发布 → 项目完结
+last_updated: 2026-08-08
+current_phase: 项目完结（Phase 1-6 全部完成）
 ---
 
 # 若依测试框架改造 · 项目启动文档
@@ -853,3 +853,20 @@ master ────────────────────────�
 - **83 条用例全量 4 阶段全部通过**，Allure 报告在 Jenkins 侧边栏正常显示
 - **project-startup.md + problem.md 已同步**（Phase 6 完成状态，12 个踩坑记录）
 - **git commit + push 已执行**（5498e65）
+
+### 2026-08-08 — DingTalk 通知 + 目录解耦 + 项目完结
+
+- **DingTalk 通知（Jenkinsfile post 块）**：`success` / `failure` 分别通过 `curl` POST 到钉钉机器人 Webhook 发 Markdown 消息。Webhook URL 存 Jenkins 凭据（`dingtalk-webhook`），`environment` 块中 `credentials()` 注入为环境变量
+- **DingTalk 安全设置**：机器人选"自定义关键词"模式，关键词 `构建`。所有消息标题/正文必须包含该关键词，否则 `errcode: 310000`
+- **群聊 @机器人 vs Webhook**：钉钉群内 @机器人发消息是 chatbot 模式，需要 outging 回调服务；自定义 Webhook 是**主动推送**模式，不需要回调，只负责 POST 发消息
+- **`utils/jenkins.py`**：新增 `DingTalkNotifier` 类（`send` / `send_build_success` / `send_build_failure`），供 Python 脚本手动发钉钉通知。命令行入口 `python -m utils.jenkins dingtalk-test` 测试连通性
+- **Jenkinsfile 与 utils/jenkins.py 的关系**：两者独立运行 —— Jenkinsfile 用 Groovy `curl` 在 Pipeline 内发通知，`utils/jenkins.py` 用 Python `urllib` 在本地开发机上手动发。互不调用，是同一功能的两套实现
+- **`skipDefaultCheckout()`**：解决 Jenkins SCM checkout 后销毁 `ws` context 导致 `allure` 和 `writeFile` 在 `post` 中报 `MissingContextVariableException`
+- **VM 文件权限（共享组 + SGID）**：`groupadd dev` + `usermod -a -G dev aaa; usermod -a -G dev jenkins` + `chown -R jenkins:dev` + `chmod -R g+rwxs` — root/aaa/jenkins 三个用户均可读写项目文件，新文件自动继承 `dev` 组
+- **VM 本地仓库（无 GitHub 连接）**：删除 `.git` → `git init` → `git add .` → `git commit`，不关联远程仓库。工作流：Windows push GitHub（备份）+ Xftp 手动传文件到 VM + VM 本地 commit
+- **云服务器恢复**：Jenkins 测试期间 CPU 满载 → `reboot` → Docker MySQL/Redis `docker start` → RuoYi `nohup java -Xmx256m -Xms128m -jar ruoyi-admin.jar`
+- **Jenkinsfile 目录自发现**：硬编码 4 stage → `ls -d test_runner/test_0*/ | sort` 扫描目录 + `for` 循环动态生成 stage。加模块只需创建 `test_0N_xxx/` 目录 push，无需改 Jenkinsfile
+- **目录编号化**：`test_login` → `test_01_login`，`test_user` → `test_02_user`，`test_role` → `test_03_role`，`test_user_excel` → `test_04_user_excel`，`test_business` → `test_05_business`。格式 `test_NN_xxx`：Python import 合法（字母开头），`ls | sort` 自然排序
+- **Conftest Allure 映射 + Python import 同步更新**：根 `conftest.py` 路径检测更新为 `test_01_login` 等；5 处 `from test_runner.test_*` import 同步更新
+- **Problem #25-#27 已同步**，project-startup.md 更新至 2026-08-08
+- **git commit + push 已执行**（b916636）

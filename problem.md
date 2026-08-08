@@ -502,7 +502,28 @@ sudo chmod -R 777 /var/lib/jenkins/ruoyi-testing-frame/report
 
 ---
 
-## Phase 6 环境总览（最终可用状态）
+## 27. 钉钉机器人通知配置
+
+**需求**：Jenkins 构建成功/失败自动推送通知到钉钉群。
+
+**实现方式**：Jenkinsfile `post{success{}}` / `post{failure{}}` 块中 Groovy 拼接 Markdown JSON → `writeFile` → `sh curl` POST 到钉钉 Webhook。
+
+**配置步骤**：
+1. 钉钉群 → 群设置 → 智能群助手 → 添加机器人 → 自定义 Webhook
+2. 安全设置选"自定义关键词"，填入 `构建`
+3. 复制 Webhook URL → Jenkins → Manage Jenkins → Credentials → Secret text（ID: `dingtalk-webhook`）
+4. Jenkinsfile `environment { DINGTALK_WEBHOOK = credentials('dingtalk-webhook') }` 注入环境变量
+
+**踩坑**：
+- **errcode 310000**：消息不包含关键词 `构建` → 所有消息标题和正文必须包含该关键词
+- **群内 @机器人无响应**：@机器人是 chatbot 模式（需要 outgoing 回调服务），Webhook 是主动推送模式，两者不同。Jenkins 通知是 Webhook 主动推送，群内 @机器人发"构建"不会触发 Jenkins
+- **`writeFile` 需 `node` context**：`allure` 和 `writeFile` 在 `post` 中报 `MissingContextVariableException`，因为 SCM checkout 销毁了 `ws` → 用 `skipDefaultCheckout()` 解决
+- **Jenkins 凭据未创建**：`ERROR: dingtalk-webhook` → 需先在 Jenkins 界面创建 Secret text 凭据
+- **模板排版**：钉钉 Markdown 不支持表格左侧 `|` 前有空格的格式，需去掉 `|` 前的空格
+
+**Python 备用通知**：`utils/jenkins.py` 中 `DingTalkNotifier` 类（使用 `urllib`）提供相同能力，可通过 `python -m utils.jenkins dingtalk-test` 测试连通性，或从 Python 脚本手动发送。
+
+---
 
 ```
 虚拟机 Ubuntu 22.04 (192.168.119.144)
