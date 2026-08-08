@@ -16,7 +16,7 @@ import pytest
 from core.apiutil import ApiEngine
 from utils.assertions import run_db_verify
 from utils.readyaml import get_testcase_yaml, write_runtime, FILE_PATH
-from test_runner.test_role.helpers import (
+from test_runner.test_03_role.helpers import (
     build_scope_user,
     create_role,
     get_role_id,

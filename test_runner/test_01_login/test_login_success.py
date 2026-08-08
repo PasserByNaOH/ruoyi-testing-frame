@@ -10,7 +10,7 @@ import os
 
 from core.apiutil import ApiEngine
 from utils.readyaml import get_testcase_yaml, FILE_PATH
-from test_runner.test_login.helpers import prepare_captcha
+from test_runner.test_01_login.helpers import prepare_captcha
 
 
 # 加载测试案例yaml

@@ -15,7 +15,7 @@ import pytest
 from core.apiutil import ApiEngine
 from utils.assertions import run_db_verify
 from utils.readyaml import get_testcase_yaml, write_runtime, FILE_PATH
-from test_runner.test_user.helpers import create_user, get_user_id
+from test_runner.test_02_user.helpers import create_user, get_user_id
 
 # ── 加载 YAML ─────────────────────────────────────────────────
 

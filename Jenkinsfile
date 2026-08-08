@@ -19,50 +19,34 @@ pipeline {
 
     stages {
 
-        stage('1. 登录测试') {
+        stage('Clean') {
             steps {
                 sh '''
                     cd /var/lib/jenkins/ruoyi-testing-frame
-                    uv run pytest test_runner/test_login/ \
-                        --alluredir=report/temp \
-                        --clean-alluredir \
-                        -v
+                    rm -rf report/temp
                 '''
             }
         }
 
-        stage('2. 用户管理') {
+        stage('Discover & Run') {
             steps {
-                sh '''
-                    cd /var/lib/jenkins/ruoyi-testing-frame
-                    uv run pytest test_runner/test_user/ \
-                        --alluredir=report/temp \
-                        -v
-                '''
-            }
-        }
+                script {
+                    def modules = sh(
+                        script: '''cd /var/lib/jenkins/ruoyi-testing-frame
+                                   ls -d test_runner/test_0*/ | sed 's|/$||' | sort''',
+                        returnStdout: true
+                    ).trim().split('\n')
 
-        stage('3. 角色权限') {
-            steps {
-                sh '''
-                    cd /var/lib/jenkins/ruoyi-testing-frame
-                    uv run pytest test_runner/test_role/ \
-                        --alluredir=report/temp \
-                        -v
-                '''
-            }
-        }
-
-        stage('4. 文件与业务流') {
-            steps {
-                sh '''
-                    cd /var/lib/jenkins/ruoyi-testing-frame
-                    uv run pytest \
-                        test_runner/test_user_excel/ \
-                        test_runner/test_business/ \
-                        --alluredir=report/temp \
-                        -v
-                '''
+                    for (module in modules) {
+                        def name = module.replaceAll('^test_runner/test_[0-9]+_', '')
+                        stage(name) {
+                            sh """
+                                cd /var/lib/jenkins/ruoyi-testing-frame
+                                uv run pytest ${module}/ --alluredir=report/temp -v
+                            """
+                        }
+                    }
+                }
             }
         }
 
@@ -89,8 +73,8 @@ pipeline {
                         "| 构建编号 | #${env.BUILD_NUMBER} |",
                         "| 耗时 | ${currentBuild.durationString} |",
                         "| 分支 | ${env.GIT_BRANCH ?: 'master'} |",
-                        "| [Allure 报告](${env.BUILD_URL}allure) | 点击查看 |",
-                        "| [控制台日志](${env.BUILD_URL}console) | 点击查看 |",
+                        "| Allure 报告| [点击查看](${env.BUILD_URL}allure) |",
+                        "| 控制台日志| [点击查看](${env.BUILD_URL}console) |",
                     ].join('\n')
 
                     def payload = groovy.json.JsonOutput.toJson([
@@ -118,8 +102,8 @@ pipeline {
                         "| 构建编号 | #${env.BUILD_NUMBER} |",
                         "| 耗时 | ${currentBuild.durationString} |",
                         "| 分支 | ${env.GIT_BRANCH ?: 'master'} |",
-                        "| [错误日志](${env.BUILD_URL}console) | 点击查看 |",
-                        "| [Allure 报告](${env.BUILD_URL}allure) | 部分结果 |",
+                        "| 错误日志 | [点击查看](${env.BUILD_URL}console) |",
+                        "| Allure 报告 | [部分结果](${env.BUILD_URL}allure) |",
                     ].join('\n')
 
                     def payload = groovy.json.JsonOutput.toJson([

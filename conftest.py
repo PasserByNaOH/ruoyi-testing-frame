@@ -109,13 +109,13 @@ def pytest_collection_modifyitems(items):
         item.add_marker(allure.epic("若依管理系统"))
 
         path = str(item.fspath)
-        if "test_login" in path:
+        if "test_01_login" in path:
             item.add_marker(allure.feature("登录"))
-        elif "test_user" in path and "test_user_excel" not in path:
+        elif "test_02_user" in path:
             item.add_marker(allure.feature("用户管理"))
-        elif "test_role" in path:
+        elif "test_03_role" in path:
             item.add_marker(allure.feature("角色权限"))
-        elif "test_user_excel" in path:
+        elif "test_04_user_excel" in path:
             item.add_marker(allure.feature("Excel导入导出"))
-        elif "test_business" in path:
+        elif "test_05_business" in path:
             item.add_marker(allure.feature("业务流程"))

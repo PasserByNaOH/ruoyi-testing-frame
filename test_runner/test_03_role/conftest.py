@@ -208,7 +208,7 @@ def isolation_users(base_url, db_connection):
     - 所有数据 at_ 前缀，session 结束时由 clean_at_test_data 自动清理
     - 返回 {role_name: role_id, username: user_id} 字典供测试直接引用
     """
-    from test_runner.test_role.helpers import (
+    from test_runner.test_03_role.helpers import (
         build_scope_user,
         create_role,
         get_role_id,
