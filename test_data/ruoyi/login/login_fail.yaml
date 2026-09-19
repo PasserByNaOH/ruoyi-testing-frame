@@ -157,7 +157,8 @@ test_cases:
     captcha_mode: valid
     setup:
       redis:
-        pwd_err_cnt:LoginTestUser: 5
+        # 模拟"已经错了 4 次"，本条请求就是第 5 次 —— 覆盖计数 4 → 5 的跨阈值瞬间
+        pwd_err_cnt:LoginTestUser: 4
     json:
       username: LoginTestUser
       password: wrong_password
@@ -167,8 +168,19 @@ test_cases:
       - type: body_code
         expected: 500
       - type: body_contains
-        keyword: 密码输入错误5次
+        # 第 5 次错的仍然是密码，若依抛的是"密码错误"而不是锁定消息
+        # （validate() 是"先读计数判断是否已锁 → 再比对密码"，计数 4 不满足 >=5，所以走进密码错分支）
+        keyword: 用户不存在/密码错误
+      - type: body_not_contains
+        # 明确断言"这一次还没被锁"，证明阈值不是 4
+        keyword: 帐户锁定
       - type: token_absent
+    redis_verify:
+      # 计数确实被写成了 5（跨过阈值）
+      counter: 5
+      # 同时挂上 10 分钟锁定倒计时；刚写入所以还剩 500~600 秒
+      # 上界用 <=600 而不是 <600：若断言落在同一秒内，TTL 读回来就是 600
+      ttl_between: [500, 600]
 
   - case_name: 锁定后正确密码登录
     captcha_mode: valid
