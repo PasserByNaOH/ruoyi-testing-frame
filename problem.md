@@ -542,3 +542,73 @@ Jenkins Pipeline Job（Script 模式，手动粘贴 Jenkinsfile）
 
 Allure 报告          手动生成 + python3 -m http.server 8088
 ```
+
+---
+
+## 28. 越权用例"为错误的理由"通过 —— 角色 DataScope 过滤的是「持有者的部门」
+
+**现象**：`test_scope_mgr_edit_ceo_role` 失败。mgr_103（`data_scope=3`，本部门 = 103）尝试修改 `at_ceo` 角色，期望被拒，实际返回 `{'msg': '操作成功', 'code': 200}`。
+
+**排查**：`SysRoleController.edit` 明明调了 `checkRoleDataScope(role.getRoleId())`（Controller:118），为什么放行了？
+
+**根因**：若依对**角色**做数据权限过滤时，过滤的是「**持有该角色的用户所在部门**」，而不是角色自身的部门。`SysRoleMapper.xml` 的 `selectRoleVo`：
+
+```sql
+from sys_role r
+  left join sys_user_role ur on ur.role_id = r.role_id
+  left join sys_user u on u.user_id = ur.user_id
+  left join sys_dept d on u.dept_id = d.dept_id
+```
+
+DataScope 追加的条件是 `d.dept_id = <本部门>`。所以**只要 103 部门里有任何一个用户持有 `at_ceo` 角色，`at_ceo` 就落进了 mgr_103 的数据范围内**，`checkRoleDataScope` 直接放行。
+
+**测试数据的坑**：`_ISOLATION_USERS` 原本把 5 个 scope 用户**全部放在 103**，于是每个隔离角色都有一个 103 的持有者 → 所有角色对 mgr_103 都"可见" → 这条越权用例测不到任何东西。
+
+**修复**：把 `at_ceo_user` 从 103 挪到 101（深圳总公司），让 `at_ceo` 的持有者全部在 103 之外 → `checkRoleDataScope` 才抛"没有权限访问角色数据！"。修完 login + role 共 57 条全绿。
+
+**教训**：
+- 设计隔离数据时，「越权目标」必须**真的落在权限范围外**；而"范围"的判定维度要用**被测系统实际的过滤字段**，不能凭直觉
+- **用户级和角色级的数据权限，过滤维度不一样**：用户级看 `sys_user.dept_id`；角色级看「持有者的部门」。给用户挪个部门，可能同时改变了某个对它的可见性
+
+---
+
+## 29. 关联表孤儿行 → 重复跑批时主键冲突
+
+**现象**：连续跑全量时 `test_02_user::test_user_resetPwd[重置密码-正常]` 失败：
+
+```
+RuntimeError: 创建前置用户失败: Duplicate entry '157-2' for key 'PRIMARY'
+SQL: insert into sys_user_role(user_id, role_id) values (?,?)
+```
+
+**排查**：查库发现 `sys_user_role` 里有一行 `(157, 2)`，但 `sys_user` 里**已经没有 user_id=157 了**；同时 `at_%` 用户已全部清空——说明清理逻辑跑了，却漏了这一行。
+
+**根因**：各模块 conftest 的清理是这么写的：
+
+```sql
+DELETE FROM sys_user_role WHERE user_id IN
+  (SELECT user_id FROM sys_user WHERE user_name LIKE 'at\_%')
+```
+
+它是靠 `sys_user` 的**子查询先找到主体、再删关联**。所以「用户已被物理删除、关联行却还在」的**孤儿行对它完全隐形** —— 永远选不中，也就永远删不掉。
+
+孤儿行一直占着 `(user_id, role_id)` 这个**复合主键**的坑位；等自增 ID 回收（人工物理删过数据，或服务重启后 MySQL 按 `MAX(id)+1` 重算自增），自增又把 157 发了出来 → 建用户时插 `sys_user_role(157, 2)` 撞主键。
+
+**为什么难查**：失败不是每次都出现 —— 只有当自增刚好回到被占用的那个 ID 时才复现，很容易被误判成"接口偶发 500"。
+
+**修复**：新增 `utils/db_cleanup.py` 的 `delete_orphan_relations(db)`，按"**关联行找不到主体**"反向清一遍，4 个模块的 `_delete_at_users` 统一调用同一份实现：
+
+```sql
+DELETE ur FROM sys_user_role ur
+LEFT JOIN sys_user u ON u.user_id = ur.user_id
+WHERE u.user_id IS NULL
+-- sys_user_post / sys_role_menu / sys_role_dept 同理
+```
+
+**为什么抽成公用函数**：这段逻辑必须在所有用到 `at_` 数据的模块里**完全一致**，分散在 4 个 conftest 里各写一份很容易漏掉其中一个——而漏掉的那个模块会在下一次跑批时随机撞主键冲突。
+
+**验证**：故意插入 2 行孤儿 `(99998,2)` / `(99999,3)` → 跑一次全量 → 孤儿被自动清空 → 连续两次全量各 83 passed。
+
+**教训**：
+- 清理逻辑如果**只沿一个方向删**（按主体找关联），就一定清不掉反向的脏数据
+- 「复合主键的关联表 + 自增主键的主表」这个组合下，**孤儿行是定时炸弹**：不报错则已，一报就是主键冲突，而且报错点在"建数据"而不是"清理"，排查方向会被完全带偏

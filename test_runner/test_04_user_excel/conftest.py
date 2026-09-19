@@ -13,6 +13,7 @@ from configparser import ConfigParser
 
 from conf.setting import FILE_PATH
 from utils.connection import ConnectMysql
+from utils.db_cleanup import delete_orphan_relations
 from utils.debugtalk import DebugTalk
 from utils.readyaml import write_runtime
 from utils.recordlog import logs
@@ -56,6 +57,8 @@ def _delete_at_users(db):
     db.execute(
         "DELETE FROM sys_user WHERE user_name LIKE 'at\\_%'"
     )
+    # 孤儿行清理：上面的语句靠 sys_user 子查询找人，删不掉"主体已不存在"的关联行
+    delete_orphan_relations(db)
 
 
 @pytest.fixture(scope="session", autouse=True)

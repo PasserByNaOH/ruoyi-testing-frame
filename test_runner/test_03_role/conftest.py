@@ -20,6 +20,7 @@ from configparser import ConfigParser
 
 from conf.setting import FILE_PATH
 from utils.connection import ConnectMysql
+from utils.db_cleanup import delete_orphan_relations
 from utils.debugtalk import DebugTalk
 from utils.readyaml import write_runtime, get_runtime
 from utils.recordlog import logs
@@ -77,6 +78,8 @@ def _delete_at_users(db):
     db.execute(
         "DELETE FROM sys_user WHERE user_name LIKE 'at\\_%'"
     )
+    # 孤儿行清理：上面的语句靠 sys_user 子查询找人，删不掉"主体已不存在"的关联行
+    delete_orphan_relations(db)
 
 
 def _delete_at_roles(db):
@@ -185,8 +188,22 @@ _ISOLATION_ROLES = [
 ]
 
 # 隔离用户定义
+#
+# ⚠️ at_ceo_user 特意放在 101（深圳总公司）而不是 103，这不是随手写的：
+#
+# 若依对「角色」做数据权限过滤时，过滤的是「**持有该角色的用户所在部门**」，
+# 而不是角色自身的部门 —— SysRoleMapper.xml 的 selectRoleVo 是
+#   sys_role r ⋈ sys_user_role ur ⋈ sys_user u ⋈ sys_dept d
+# DataScope 追加的条件是 d.dept_id = <本部门>。
+#
+# 后果：只要 103 部门里有任何一个用户持有 at_ceo 角色，at_ceo 就会落进
+# mgr_103（data_scope=3，本部门=103）的数据范围内，checkRoleDataScope 直接放行，
+# 「越权修改 CEO 角色」这条用例就永远测不到东西（实测确实返回了 200 操作成功）。
+#
+# 把持有者放到 103 之外，at_ceo 才真正处于 mgr_103 范围外，
+# checkRoleDataScope 才会抛"没有权限访问角色数据！"。
 _ISOLATION_USERS = [
-    {"username": "at_ceo_user",        "role_name": "at_ceo",       "dept_id": 103},
+    {"username": "at_ceo_user",        "role_name": "at_ceo",       "dept_id": 101},
     {"username": "at_mgr_103",         "role_name": "at_mgr",       "dept_id": 103},
     {"username": "at_mgr_child_103",   "role_name": "at_mgr_child", "dept_id": 103},
     {"username": "at_emp_103",         "role_name": "at_emp",       "dept_id": 103},
