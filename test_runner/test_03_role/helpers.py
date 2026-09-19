@@ -332,3 +332,38 @@ def build_scope_user(base_url, username, dept_id, role_ids,
     user_id = rows[0]["userId"] if rows else None
     logs.info(f"隔离用户已创建: {username} (userId={user_id}, dept={dept_id})")
     return user_id
+
+
+# ═══════════════════════════════════════════════════════════════
+# 越权拦截校验：确认"被拒绝"的同时数据库确实没被改
+# ═══════════════════════════════════════════════════════════════
+
+def db_row(db, sql, params=None):
+    """查一行记录（dict）。无结果返回 None，用于越权请求前后的数据快照。"""
+    rows = db.query(sql, params) if params else db.query(sql)
+    return rows[0] if rows else None
+
+
+def assert_db_unchanged(db, sql, params, before, desc):
+    """
+    断言数据库相对越权请求之前没有变化。
+
+    为什么必须要有这一步：只断言"接口返回非 200"是发现不了
+    "先改数据、再返回拒绝"这种校验顺序写反的缺陷的——那种情况下
+    接口正确报错，数据却已经被改掉了，用例照样是绿的。
+
+    before 为 None 说明目标数据根本不存在，此时前后对比会变成
+    "None == None" 的空断言，所以这里显式拦掉。
+    """
+    assert before is not None, (
+        f"前置异常：越权测试前查不到目标数据，本条校验无意义 [{desc}]\n"
+        f"  SQL: {sql}\n  参数: {params}"
+    )
+
+    after = db_row(db, sql, params)
+    assert after == before, (
+        f"越权请求已被接口拒绝，但数据库内容发生了变化 [{desc}]\n"
+        f"  请求前的数据: {before}\n"
+        f"  请求后的数据: {after}"
+    )
+    logs.info(f"越权拦截校验通过（数据未变更）: {desc}")

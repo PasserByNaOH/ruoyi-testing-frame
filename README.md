@@ -26,7 +26,66 @@ conda run -n testframe python -m pip install pytest requests pyyaml pymysql redi
 - MySQL、Redis 用 Docker 部署，仅绑定 `127.0.0.1`，不对外暴露
 - 测试代码通过 **SSH 隧道**打通远程 MySQL / Redis（验证码答案、登录失败计数、DB 验证都依赖它）
 
-### 3. CI/CD（Jenkins）环境
+### 3. 启动被测后端（若依）
+
+后端 jar 位于 `/home/ruoyi-vue2/ruoyi-admin/target/ruoyi-admin.jar`。
+⚠️ **没有配 systemd、也没有 crontab —— 服务器重启或 SSH 会话结束不会自动拉起，必须手动启动。**
+
+**一键启动（2 核 2G 服务器，堆限 256m）：**
+
+```bash
+cd /home/ruoyi-vue2/ruoyi-admin/target && nohup java -Xmx256m -Xms128m -Duser.timezone=Asia/Shanghai -jar ruoyi-admin.jar > app.log 2>&1 & echo "started pid=$!"
+```
+
+**推荐：先判断再启动（幂等，避免重复启动报 `Port 8080 was already in use`）：**
+
+```bash
+ss -lntp | grep -q ':8080' && echo "8080 已在监听，无需重复启动" || (cd /home/ruoyi-vue2/ruoyi-admin/target && nohup java -Xmx256m -Xms128m -Duser.timezone=Asia/Shanghai -jar ruoyi-admin.jar > app.log 2>&1 & echo "started pid=$!")
+```
+
+**端口被占用的检测与处理：**
+
+```bash
+# 1. 看谁占着 8080（lsof 没装就先用 ss）
+ss -lntp | grep ':8080'
+lsof -i:8080
+
+# 2. 确认是不是自己人（若依后端）
+ps -ef | grep '[r]uoyi-admin.jar'
+
+# 3. 是自己人且服务正常 → 什么都不用做，curl 验证即可
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8080/captchaImage
+
+# 4. 需要重启 → 先杀干净再启动
+pkill -f ruoyi-admin.jar && sleep 3 && ss -lntp | grep ':8080' || echo "已释放"
+```
+
+**验证是否就绪（约 30 秒后）：**
+
+```bash
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8080/captchaImage
+```
+
+- 返回 `200` → 就绪，可以跑测试
+- 返回 `000` → 还没起来，看日志：`tail -50 /home/ruoyi-vue2/ruoyi-admin/target/app.log`
+
+**停止后端：**
+
+```bash
+pkill -f ruoyi-admin.jar
+```
+
+**排查要点：**
+
+| 现象 | 原因 / 处理 |
+|------|------------|
+| 启动报 `Port 8080 was already in use` | **大概率是后端已经在跑了**（重复启动）。先 `curl 127.0.0.1:8080/captchaImage`，返回 200 就什么都不用做；要重启就先 `pkill -f ruoyi-admin.jar` |
+| `curl 127.0.0.1:8080` 返回 `000`，`ss -lntp \| grep 8080` 无监听 | 后端没起来，看 `app.log` |
+| 外网访问返回 **502** | nginx 容器正常但后端没起（nginx `proxy_pass` 到 `172.17.0.1:8080`），把后端起来即可 |
+| 进程起来了但又很快消失 | 内存不够被 OOM kill，服务器总内存 2G（另有 2G swap），**堆就保持 `-Xmx256m`，不要加大** |
+| 依赖服务没起 | `docker ps` 确认 `ruoyi-mysql` / `ruoyi-redis` / `nginx`；没起就 `docker start ruoyi-mysql ruoyi-redis nginx` |
+
+### 4. CI/CD（Jenkins）环境
 
 Jenkins 部署在 **本机 VMware 的 2 核 4G Ubuntu 虚拟机**上（非云服务器）：
 

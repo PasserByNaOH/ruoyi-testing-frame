@@ -196,7 +196,14 @@ _ISOLATION_USERS = [
 ]
 
 # 所有角色共用：系统管理目录 + 用户管理菜单 + 用户查询按钮
-_ISOLATION_MENU_IDS = [1, 100, 1000]
+#          + 用户修改(1002) / 用户删除(1003) / 重置密码(1006) + 角色修改(1009)
+#
+# 为什么必须补写权限：只给"查"权限时，5 条越权写用例会全部在 @PreAuthorize
+# （第一层：菜单权限）就被 403 挡掉，请求根本进不到 Service 层，
+# checkUserDataScope（第二层：数据权限）一次都不执行——那样只测了"菜单权限"，
+# 没测到"数据权限"。补上写权限后请求会穿过第一层，由第二层的
+# checkUserDataScope 抛异常拒绝（返回 500），此时才真正在测 DataScope。
+_ISOLATION_MENU_IDS = [1, 100, 1000, 1002, 1003, 1006, 1009]
 
 
 @pytest.fixture(scope="session")

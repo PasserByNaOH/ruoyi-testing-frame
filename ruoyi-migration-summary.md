@@ -34,10 +34,10 @@ YAML → parametrize → specification_yaml()
 
 | 项目 | 信息 |
 |---|---|
-| 服务器 | `47.109.149.194:8080`（若依管理系统） |
+| 服务器 | `<服务器IP>:8080`（若依管理系统） |
 | MySQL | Docker 运行，仅绑定 `127.0.0.1:3306` |
 | Redis | Docker 运行，仅绑定 `127.0.0.1:6379` |
-| SSH | `root@47.109.149.194:22` |
+| SSH | `root@<服务器IP>:22` |
 | 验证码类型 | `math`（算式计算） |
 | 密码加密 | BCrypt（不是 MD5/SHA1） |
 | 账户锁定 | 5 次失败 → 锁定 10 分钟，Redis key: `pwd_err_cnt:{username}` |
@@ -81,10 +81,10 @@ Mock 服务：HTTP 状态码分散（200/401/500）+ JSON body
 **□ config.ini 改造**
 ```ini
 [api_envi]
-host = http://47.109.149.194:8080
+host = http://<服务器IP>:8080
 
 [SSH]
-host = 47.109.149.194
+host = <服务器IP>
 port = 22
 username = root
 password = 你的密码

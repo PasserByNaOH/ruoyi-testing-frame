@@ -35,10 +35,10 @@ current_phase: 项目完结（Phase 1-6 全部完成）
 
 | 项目 | 信息 |
 |------|------|
-| 服务器 | `xxxxx:8080` |
+| 服务器 | `<服务器IP>:8080` |
 | MySQL | Docker，仅绑 `127.0.0.1:3306` |
 | Redis | Docker，仅绑 `127.0.0.1:6379` |
-| SSH | `root@xxxxx:22` |
+| SSH | `root@<服务器IP>:22` |
 | 验证码类型 | `math`（算式计算） |
 | HTTP 响应 | 永远 200，业务状态码在 JSON body 的 `code` 字段 |
 
@@ -464,7 +464,7 @@ Windows 开发机                      GitHub                         VMware Ubu
 └─────────────────┘                                               │  │   (Redis + MySQL)        │
                                                                   │  └─ Pipeline Job           │
                                                                   │      ├─ Stage 1: 登录 15 条│
-云服务器 xxxxxxxxxxxxx                                         │      ├─ Stage 2: 用户 24 条│
+云服务器 <服务器IP>                                               │      ├─ Stage 2: 用户 24 条│
 ┌─────────────────────────┐                                       │      ├─ Stage 3: 角色 42 条│
 │  RuoYi-Vue :8080        │ ←── SSH 隧道 ─────────────────────── │      └─ Stage 4: 文件+业务  │
 │  MySQL Docker :3306     │                                         │            2 条             │
@@ -545,7 +545,7 @@ pipeline {
 |------|-----|
 | 宿主机 | Windows 11 + VMware Workstation |
 | VM 系统 | Ubuntu 22.04.5 LTS |
-| VM IP | 192.168.119.144 |
+| VM IP | `<虚拟机局域网IP>` |
 | Jenkins 端口 | :9090 |
 | Jenkins 版本 | 2.548（2026-08） |
 | Java | OpenJDK 21.0.9 |

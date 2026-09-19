@@ -389,11 +389,11 @@ sudo chown jenkins:jenkins /var/lib/jenkins/ruoyi-testing-frame/data
 
 ## 22. `config.ini` 复制时 IP 笔误
 
-**现象**：虚拟机 Jenkins 构建中 HTTP 请求打到了 `http://47.10.149.194:8080`（少了一个 `9`），ConnectionError。
+**现象**：虚拟机 Jenkins 构建中 HTTP 请求打到了一个写错的服务器地址（IP 少打了一位数字），ConnectionError。
 
-**原因**：config.ini 从 Windows 手工拷贝到虚拟机时键盘输入错误。云服务器真实 IP 是 `47.109.149.194`。
+**原因**：config.ini 从 Windows 手工拷贝到虚拟机时手工填 IP，键盘输入错误。
 
-**修复**：`sed -i 's/47\.10\.149\.194/47.109.149.194/g' config.ini`。
+**修复**：用 `sed` 把 config.ini 里写错的 IP 批量替换成正确的（正则里 `\.` 必须转义，否则 `.` 会匹配任意字符）。
 
 **教训**：IP/密码等敏感信息要么用 Jenkins Credentials 注入，要么用 `diff` 对比 Windows 和 Linux 两端配置确认一致。
 
@@ -526,7 +526,7 @@ sudo chmod -R 777 /var/lib/jenkins/ruoyi-testing-frame/report
 ---
 
 ```
-虚拟机 Ubuntu 22.04 (192.168.119.144)
+虚拟机 Ubuntu 22.04（局域网 IP）
 ├── Jenkins         /var/lib/jenkins/jenkins.war  :9090  (java 21)
 ├── 项目            /var/lib/jenkins/ruoyi-testing-frame/  (jenkins:jenkins)
 ├── Python 3.12     uv venv (.venv)
