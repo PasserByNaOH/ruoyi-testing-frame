@@ -63,14 +63,29 @@ def _get_env():
     return env
 
 
-def _run(cmd, desc):
+def _run(cmd, desc, required=True):
+    """
+    执行一条命令，返回 returncode。
+
+    required=True （默认）：失败即中断 —— 用于"没成功后面就没意义"的步骤。
+    required=False        ：失败只记警告、继续往下走 —— 用于跑测试那一步。
+
+    为什么测试那一步不能中断：
+        有用例失败时 pytest 依然会把**已完成用例的结果**写进 alluredir。
+        如果直接 SystemExit，后面的 allure generate / open 都不会执行，
+        结果是"什么都不给你看"——比"报告里 70 绿 3 红"糟糕得多。
+        所以把失败码先留着，等报告生成、打开之后再作为退出码抛出去。
+    """
     print(f"\n>>> {desc}")
     result = subprocess.run(
         cmd, cwd=PROJECT_ROOT, shell=True, env=_get_env(),
     )
     if result.returncode != 0:
-        print(f"FAIL: {desc} (exit={result.returncode})")
-        raise SystemExit(result.returncode)
+        if required:
+            print(f"FAIL: {desc} (exit={result.returncode})")
+            raise SystemExit(result.returncode)
+        print(f"WARN: {desc} 未全部通过 (exit={result.returncode}) —— 继续生成报告")
+    return result.returncode
 
 
 if __name__ == "__main__":
@@ -79,11 +94,17 @@ if __name__ == "__main__":
     print("=" * 50)
 
     # 1. 运行全量测试，收集 Allure 数据
-    _run(
+    #    required=False：即使有用例失败（甚至后端中途抖动导致部分报错），
+    #    也继续往下生成报告，最后再用这个返回码退出。
+    test_code = _run(
         f'{PYTHON} -m pytest -q '
         f'--alluredir="{REPORT_TEMP}" --clean-alluredir',
         "1/3  运行全量测试",
+        required=False,
     )
+    if test_code != 0:
+        print(f"     [!] 本次未全部通过（exit={test_code}），"
+              f"仍继续生成报告，最后以该返回码退出")
 
     # 2. 复制环境信息到 Allure 数据目录
     env_xml = os.path.join(PROJECT_ROOT, "environment.xml")
@@ -102,3 +123,9 @@ if __name__ == "__main__":
         f'allure open "{REPORT_OUTPUT}"',
         "3/3  打开报告",
     )
+
+    # 5. 报告已经给到人看了，这时候再把测试的失败码抛出去
+    if test_code != 0:
+        print(f"\n>>> 全量测试未全部通过 (exit={test_code})")
+        raise SystemExit(test_code)
+    print("\n>>> 全量测试全部通过，报告已生成")

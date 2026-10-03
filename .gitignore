@@ -12,6 +12,7 @@ data/excel/
 
 # Python 缓存
 __pycache__/
+.pytest_cache/
 
 # 运行时日志
 logs/*.log
@@ -34,3 +35,7 @@ report/
 
 # 面试准备资料（含具体公司名 / 投递台账 / 笔试真题，不入公开仓库）
 面试准备/
+
+# 文档与过程资产（计划台账 / 踩坑记录 / 交接提示词 / 学习脚手架）
+# 已在 HEAD 中跟踪的根级 project-startup.md 等随此次移动一并取消跟踪
+docs/
