@@ -54,30 +54,3 @@ class SendRequest:
                logs.info(f"文件上传: {list(kwargs['files'].keys())}")
 
           return self.send_request(method=method, url=url, headers=headers, **kwargs)
-
-
-# ═══════════════════════════════════════════════════════════
-# 自测入口：验证 HTTP 请求层（打若依验证码接口，不需要 token）
-# ═══════════════════════════════════════════════════════════
-if __name__ == "__main__":
-    import configparser
-    from conf.setting import FILE_PATH
-    cf = configparser.ConfigParser()
-    cf.read(FILE_PATH["CONFIG"], encoding="utf-8")
-    host = cf.get("api_envi", "host")
-
-    s = SendRequest()
-    resp = s.run_main(
-        method="get",
-        url=f"{host}/captchaImage",
-        headers={"Accept": "application/json"}
-    )
-    print(f"HTTP 状态码: {resp.status_code}")
-
-    if resp.status_code == 200:
-        data = resp.json()
-        print(f"uuid: {data.get('uuid')}")
-        print(f"img 长度: {len(data.get('img', ''))} 字符")
-        print("请求层验证通过！")
-    else:
-        print(f"服务器返回非 200，响应内容: {resp.text[:200]}")

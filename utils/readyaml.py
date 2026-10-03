@@ -99,28 +99,3 @@ def clear_runtime():
           logs.info("runtime.yaml 已清空")
      except Exception:
           logs.error(f"清空 runtime.yaml 失败: {traceback.format_exc()}")
-
-
-# ═══════════════════════════════════════════════════════════
-# 自测入口：验证 YAML 读取是否正常
-# ═══════════════════════════════════════════════════════════
-
-
-if __name__ == "__main__":
-     test_yaml = os.path.join(FILE_PATH["YAML"], "ruoyi", "login", "yamlRead_test.yaml")
-     print(f"读取测试文件: {test_yaml}")
-
-     try:
-          cases = get_testcase_yaml(test_yaml)
-          print(f"共解析到 {len(cases)} 条用例\n")
-
-          for i, (base_info, case) in enumerate(cases, 1):
-               print(f"--- 用例 {i}: {case['case_name']} ---")
-               print(f"  接口: {base_info['api_name']}")
-               print(f"  URL: {base_info.get('captcha_url', base_info.get('login_url', 'N/A'))}")
-               print(f"  方法: {base_info['method']}")
-               print(f"  data: {case.get('data', {})}")
-               print(f"  validations: {len(case.get('validations', []))} 条断言")
-               print()
-     except Exception as e:
-          print(f"测试失败: {e}")

@@ -52,6 +52,162 @@ def login_for_yaml(base_url, username, redis_client, password="123456"):
     return token
 
 
+class PlaceholderError(Exception):
+    """${} 占位符的解析错误：语法不合法、函数不存在、替换结果不是合法 JSON。"""
+
+
+# 变量替换的最大轮数，防止"替换结果里又含占位符"导致死循环
+_MAX_REPLACE_ROUNDS = 1000
+
+
+def _find_innermost_placeholder(text):
+    """
+    从 text 里找出「当前最内层」的一个 ${func(args)}。
+
+    返回 (start, end, func_name, func_params)：
+        start / end  — 占位符在 text 中的起止下标（含 ${ 和 }）
+        func_name    — 函数名，已 strip
+        func_params  — 参数列表（list[str]，已 strip）
+
+    找不到可解析的占位符返回 None；${ 没有配对的 } 抛 PlaceholderError。
+
+    为什么不用"花括号深度配对 + 字符串字面量跟踪"：
+        入参非 str 时是 json.dumps 出来的文本，JSON 自身的 {} 和转义引号 \\"
+        会污染深度与引号状态，那种算法会误判（实测 5 种真实用例全部报错）。
+        这里改用更笨但正确的办法 —— 对每个 ${ 向后找「第一个使括号归零的 }」：
+        占位符自身的 {} 总是平衡的，所以第一个归零处一定是它的结尾；
+        内层还有 ${ 时深度不会归零，扫描自然会把整个嵌套区间包进来。
+    """
+    at = text.find("${")
+    while at != -1:
+        # ① 向后扫描，找这个 ${ 的配对 }
+        depth = 0
+        close = -1
+        for i in range(at + 1, len(text)):
+            if text[i] == "{":
+                depth += 1
+            elif text[i] == "}":
+                depth -= 1
+                if depth == 0:
+                    close = i
+                    break
+        if close == -1:
+            raise PlaceholderError(
+                f"占位符缺少配对的 '}}'：{text[at:at + 120]!r}"
+            )
+
+        # ② 在区间内解析 func(args)
+        body = text[at + 2:close]
+        if "(" in body:
+            paren = body.index("(")
+            func_name = body[:paren].strip()
+            rest = body[paren:]
+
+            # 找配对的 )，必须正好落在区间末尾
+            depth = 0
+            arg_end = -1
+            for i, ch in enumerate(rest):
+                if ch == "(":
+                    depth += 1
+                elif ch == ")":
+                    depth -= 1
+                    if depth == 0:
+                        arg_end = i
+                        break
+
+            if (arg_end != -1
+                    and rest[arg_end + 1:].strip() == ""
+                    and "${" not in body):
+                # 参数段内不再含 ${ → 这就是最内层
+                return (at, close, func_name, _split_func_params(rest[1:arg_end]))
+
+        # ③ 区间内还有更内层的 ${ → 跳到下一个继续找
+        nxt = text.find("${", at + 2)
+        if nxt == -1 or nxt > close:
+            raise PlaceholderError(
+                f"占位符格式应为 ${{函数名(参数)}}，实际是："
+                f"{text[at:close + 1]!r}"
+            )
+        at = nxt
+
+    return None
+
+
+def _split_func_params(raw):
+    """
+    按「顶层逗号」切分参数，返回 list[str]（每段已 strip）。
+
+    只有深度为 0 的逗号才是参数分隔符；() [] {} 内部的逗号、以及引号内的
+    逗号都不切。空参数段 → 返回 []，这样 ${func()} 就是真正的零参数调用
+    （旧实现会传一个空字符串进去，靠函数默认值侥幸没炸）。
+    """
+    raw = _unescape_json_text(raw)
+    if raw.strip() == "":
+        return []
+
+    params = []
+    current = []
+    depth = 0
+    in_quote = False
+    escaped = False
+
+    for ch in raw:
+        if escaped:
+            current.append(ch)
+            escaped = False
+            continue
+        if ch == "\\":
+            current.append(ch)
+            escaped = True
+            continue
+        if ch == '"':
+            in_quote = not in_quote
+            current.append(ch)
+            continue
+        if not in_quote:
+            if ch in "([{":
+                depth += 1
+            elif ch in ")]}":
+                depth -= 1
+            elif ch == "," and depth == 0:
+                params.append("".join(current).strip())
+                current = []
+                continue
+        current.append(ch)
+
+    params.append("".join(current).strip())
+    return [_unescape_json_text(p) for p in params]
+
+
+def _unescape_json_text(text):
+    r"""把 json.dumps 产生的转义还原：\" → "，\\ → \。"""
+    return text.replace('\\"', '"').replace("\\\\", "\\")
+
+
+def _escape_json_text(text):
+    r"""把值转义成能安全嵌进 JSON 字符串的文本：\ → \\，`"` → \"。"""
+    return text.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def _stringify_for_splice(value):
+    """
+    把一个替换结果转成可嵌入 JSON 文本的字符串。
+
+    文本拼接语义（"/user/${a()}" → "/user/501"）要求字符串不加引号，
+    所以这里用「转义」而不是 json.dumps —— 与改造前的行为保持一致。
+    """
+    if isinstance(value, str):
+        return _escape_json_text(value)
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)):
+        return repr(value)
+    # list / dict 等其余类型：整体序列化成 JSON
+    return _escape_json_text(json.dumps(value, ensure_ascii=False))
+
+
 class ApiEngine:
     """编排引擎：调用链入口，串联变量替换 → HTTP 请求 → 数据提取 → 断言。"""
 
@@ -68,32 +224,66 @@ class ApiEngine:
 
     def replace_load(self, data):
         """
-        扫描 ${func(args)} 模式，从内到外逐层替换（支持嵌套）。
-        支持字符串和字典（先转 JSON 字符串处理再还原）。
+        把 YAML 里的 ${func(args)} 替换成活的值。
+
+        算法：每次取「当前最内层」的一个占位符就地展开，直到没有为止。
+        - 多占位符：字符串里有多少个就展开多少个（如 /user/${a()},${b()}）
+        - 嵌套：靠"参数段内还含 ${ 就跳过、去看下一个 ${ "实现内层优先
+        - 整串恰为一个占位符：直接返回原始类型（int / list / None 原样透传）
+        - 其余情况：按字符串拼接语义替换，结果仍是字符串
+
+        注意：入参非 str 时会被 json.dumps 转义，所以取的参数要先反转义、
+        回填的值要先转义，否则含 " 或 \\ 的内容会把 JSON 拼坏。
         """
         str_data = data
         if not isinstance(data, str):
             str_data = json.dumps(data, ensure_ascii=False)
 
-        while "${" in str_data:
-            start = str_data.rfind("${")              # 最内层的 ${
-            end = str_data.index("}", start)          # 它对应的 }
-            ref_all = str_data[start:end + 1]         # 整段 ${...}
+        result = None
+        for _ in range(_MAX_REPLACE_ROUNDS):
+            if "${" not in str_data:
+                break
 
-            func_name = ref_all[2:ref_all.index("(")]
-            func_params = ref_all[ref_all.index("(") + 1:ref_all.index(")")]
+            found = _find_innermost_placeholder(str_data)
+            if found is None:
+                raise PlaceholderError(
+                    f"占位符缺少配对的 '}}'：{str_data[:120]!r}"
+                )
 
-            result = getattr(DebugTalk(), func_name)(
-                *func_params.split(",") if func_params else ""
+            start, end, func_name, func_params = found
+            func = getattr(DebugTalk(), func_name, None)
+            if func is None:
+                raise PlaceholderError(
+                    f"DebugTalk 里没有这个方法：{func_name}()\n"
+                    f"  占位符: {str_data[start:end + 1]}"
+                )
+
+            result = func(*func_params)
+
+            # 整串恰为这一个占位符 → 保留原始类型，不做字符串化
+            if start == 0 and str_data[end + 1:].strip() == "":
+                return result
+
+            str_data = (
+                str_data[:start]
+                + _stringify_for_splice(result)
+                + str_data[end + 1:]
+            )
+        else:
+            raise PlaceholderError(
+                f"变量替换超过 {_MAX_REPLACE_ROUNDS} 轮，疑似替换结果自引用："
+                f"{str_data[:120]!r}"
             )
 
-            if result and isinstance(result, list):
-                result = ",".join(str(e) for e in result)
-            str_data = str_data.replace(ref_all, str(result))
-
-        # 还原数据类型
-        if data and isinstance(data, (dict, list)):
-            return json.loads(str_data)
+        # 还原数据类型（仅 dict / list 入参需要）
+        if isinstance(data, (dict, list)):
+            try:
+                return json.loads(str_data)
+            except json.JSONDecodeError as e:
+                raise PlaceholderError(
+                    f"变量替换后已不是合法 JSON：{e}\n"
+                    f"  替换结果: {str_data[:200]!r}"
+                ) from e
         return str_data
 
     # ═══════════════════════════════════════════════════════════
@@ -335,63 +525,3 @@ class ApiEngine:
         """PHASE 5: Allure 报告附件。"""
         raise NotImplementedError("attach_allure 将在 Phase 5 实现")
 
-
-# ═══════════════════════════════════════════════════════════
-# 自测入口
-# ═══════════════════════════════════════════════════════════
-if __name__ == "__main__":
-    engine = ApiEngine()
-
-    # ── 测试 1: replace_load ──
-    print("--- 测试 1: replace_load 变量替换 ---")
-
-    result = engine.replace_load("time_${timestamp()}")
-    print(f"时间戳替换: {result[:20]}... (长度: {len(result)})")
-
-    result = engine.replace_load("user_${random_str(6)}")
-    print(f"随机串替换: {result}")
-
-    # 字典带入
-    data = {"username": "user_${random_str(4)}", "timestamp": "${timestamp()}"}
-    result = engine.replace_load(data)
-    print(f"字典替换: {result}")
-
-    # 嵌套
-    write_runtime({"greeting": "hello"})
-    result = engine.replace_load("${get_runtime(greeting)}_world")
-    print(f"get_runtime 替换: {result}")
-    clear_runtime()
-
-    # ── 测试 2: extract_data ──
-    print("\n--- 测试 2: extract_data 数据提取 ---")
-
-    login_response = '{"code": 200, "msg": "操作成功", "token": "fake_token_123"}'
-    extract_rules = {"token": "$.token", "code": "$.code"}
-    engine.extract_data(extract_rules, login_response)
-
-    print(f"runtime 中的 token: {get_runtime('token')}")
-    print(f"runtime 中的 code: {get_runtime('code')}")
-    clear_runtime()
-
-    # ── 测试 3: specification_yaml（仅 JSON 用例） ──
-    print("\n--- 测试 3: specification_yaml（打 captchaImage） ---")
-    base_info = {
-        "api_name": "captcha",
-        "url": "/captchaImage",
-        "method": "get",
-        "headers": {"Accept": "application/json"}
-    }
-    test_case = {
-        "case_name": "获取验证码",
-        "validations": [
-            {"type": "status_code", "expected": 200},
-            {"type": "body_code", "expected": 200}
-        ]
-    }
-
-    try:
-        resp = engine.specification_yaml(base_info, dict(test_case))
-        print(f"captchaImage 响应: code={resp.json().get('code')}, uuid={resp.json().get('uuid')}")
-        print("apiutil 引擎验证通过！")
-    except Exception as e:
-        print(f"执行失败: {e}")
