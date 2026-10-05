@@ -277,6 +277,52 @@ def _stringify_for_splice(value):
     return json.dumps(value, ensure_ascii=False)
 
 
+def _resolve_extract(key, expression, response_text):
+    """
+    按一条 extract 规则求值，返回提取到的值（不写 runtime、不发请求）。
+
+    纯函数：同样的入参永远得到同样的结果，所以能被单元测试直接覆盖，
+    包括 jsonpath / 正则 / null / 未匹配 这些真实服务器上很难稳定复现的分支。
+
+    提取不到"可用的值"时抛 RuntimeError；详细规则见 extract_data 的文档。
+    """
+    def fail(reason):
+        snippet = response_text or ""
+        if len(snippet) > 200:
+            snippet = snippet[:200] + "..."
+        return RuntimeError(
+            f"提取变量失败 [{key}]：{reason}\n"
+            f"  表达式: {expression}\n"
+            f"  响应片段: {snippet}"
+        )
+
+    if expression.startswith("$"):
+        try:
+            document = json.loads(response_text)
+        except (TypeError, ValueError) as e:
+            raise fail(f"响应不是合法 JSON，无法做 jsonpath 提取（{e}）") from e
+
+        result = jsonpath.jsonpath(document, expression)
+        # 该库没有匹配时返回 False（不是空列表），匹配到则返回列表
+        if not result:
+            raise fail("jsonpath 未匹配")
+        value = result[0]
+        if value is None:
+            raise fail("jsonpath 匹配到了字段，但值是 null")
+        return value
+
+    if "(" in expression:
+        try:
+            match = re.search(expression, response_text or "")
+        except re.error as e:
+            raise fail(f"正则表达式不合法（{e}）") from e
+        if match is None:
+            raise fail("正则未匹配")
+        return match.group(1)
+
+    raise fail("无法识别的提取表达式（应以 $ 开头走 jsonpath，或含 ( 走正则）")
+
+
 class ApiEngine:
     """编排引擎：调用链入口，串联变量替换 → HTTP 请求 → 数据提取 → 断言。"""
 
@@ -423,36 +469,32 @@ class ApiEngine:
 
     def extract_data(self, extract_rules, response_text):
         """
-        从响应中提取变量，写入 runtime.yaml。
-        支持 jsonpath（用 $ 开头）和正则（用 ( 开头）。
+        从响应中提取变量并写入 runtime.yaml。
+
+        支持两种表达式：
+            $ 开头   —— jsonpath，如 $.token、$.rows[0].userId
+            含 (     —— 正则，如 r'"token":"(.*?)"'
+
+        **提取失败一律抛异常，不再只打日志。** 理由：runtime.yaml 里的值
+        是后续用例的输入（token、实体 ID），拿不到就必须当场停下，否则错误
+        会以"一片 401""DB 查不到行"的面目出现在离原因很远的地方。
+        这与本项目"前置函数失败即 raise"的风格保持一致。
+
+        失败（抛异常）的情形：
+            - jsonpath 未匹配（库返回 False）
+            - 匹配到了但值是 null（[None]）
+            - 正则未匹配
+            - 表达式既不以 $ 开头、也不含 (
+
+        成功的情形：只要值不是 None 就算成功，包括 0 / '' / False / [] /
+        {} 这些合法的"空值"。判空必须用 `value is None`，不能写 `if not value`。
+
+        注意：jsonpath 匹配到**多条**时取第一条，这是既有行为，不做改动。
         """
         for key, expression in extract_rules.items():
-            try:
-                if expression.startswith("$"):
-                    # jsonpath 提取：$.data.token
-                    result_list = jsonpath.jsonpath(
-                        json.loads(response_text), expression
-                    )
-                    if result_list:
-                        write_runtime({key: result_list[0]})
-                        logs.info(f"提取变量: {key} = {result_list[0]}")
-                    else:
-                        logs.warning(f"jsonpath 未匹配: {expression}")
-
-                elif "(" in expression:
-                    # 正则提取：(.*?)
-                    match = re.search(expression, response_text)
-                    if match:
-                        write_runtime({key: match.group(1)})
-                        logs.info(f"提取变量: {key} = {match.group(1)}")
-                    else:
-                        logs.warning(f"正则未匹配: {expression}")
-
-                else:
-                    logs.error(f"无法识别的提取表达式: {key}={expression}")
-
-            except Exception as e:
-                logs.error(f"提取变量失败 [{key}]: {e}")
+            value = _resolve_extract(key, expression, response_text)
+            write_runtime({key: value})
+            logs.info(f"提取变量: {key} = {value!r}")
 
     # ═══════════════════════════════════════════════════════════
     # 二进制导出（Excel 等）
