@@ -53,10 +53,10 @@ def login_for_yaml(base_url, username, redis_client, password="123456"):
 
 
 class PlaceholderError(Exception):
-    """${} 占位符的解析错误：语法不合法、函数不存在、替换结果不是合法 JSON。"""
+    """${} 占位符的解析错误：语法不合法、函数不存在、参数个数不对。"""
 
 
-# 变量替换的最大轮数，防止"替换结果里又含占位符"导致死循环
+# 单个字符串内变量替换的最大轮数，防止"替换结果里又含占位符"导致死循环
 _MAX_REPLACE_ROUNDS = 1000
 
 
@@ -71,12 +71,11 @@ def _find_innermost_placeholder(text):
 
     找不到可解析的占位符返回 None；${ 没有配对的 } 抛 PlaceholderError。
 
-    为什么不用"花括号深度配对 + 字符串字面量跟踪"：
-        入参非 str 时是 json.dumps 出来的文本，JSON 自身的 {} 和转义引号 \\"
-        会污染深度与引号状态，那种算法会误判（实测 5 种真实用例全部报错）。
-        这里改用更笨但正确的办法 —— 对每个 ${ 向后找「第一个使括号归零的 }」：
-        占位符自身的 {} 总是平衡的，所以第一个归零处一定是它的结尾；
-        内层还有 ${ 时深度不会归零，扫描自然会把整个嵌套区间包进来。
+    入参永远是**真实字符串**（结构化替换后不再有 json.dumps 文本），所以
+    只需按花括号配平判断结尾，不必跟踪 JSON 转义引号。
+    算法：对每个 ${ 向后找「第一个使括号归零的 }」——占位符自身的 {} 总是
+    平衡的，所以第一个归零处一定是它的结尾；内层还有 ${ 时深度不会归零，
+    扫描自然会把整个嵌套区间包进来。
     """
     at = text.find("${")
     while at != -1:
@@ -141,7 +140,6 @@ def _split_func_params(raw):
     逗号都不切。空参数段 → 返回 []，这样 ${func()} 就是真正的零参数调用
     （旧实现会传一个空字符串进去，靠函数默认值侥幸没炸）。
     """
-    raw = _unescape_json_text(raw)
     if raw.strip() == "":
         return []
 
@@ -176,36 +174,107 @@ def _split_func_params(raw):
         current.append(ch)
 
     params.append("".join(current).strip())
-    return [_unescape_json_text(p) for p in params]
+    return params
 
 
-def _unescape_json_text(text):
-    r"""把 json.dumps 产生的转义还原：\" → "，\\ → \。"""
-    return text.replace('\\"', '"').replace("\\\\", "\\")
+def _call_debugtalk(func_name, func_params):
+    """
+    调用 DebugTalk 里以 func_name 命名的零参/多参方法。
+
+    只允许公开方法（不要 dunder，避免 ${__init__()} 之类的意外调用）；
+    函数不存在或参数个数不对时，抛出能定位问题的 PlaceholderError。
+    """
+    if func_name.startswith("__") and func_name.endswith("__"):
+        raise PlaceholderError(
+            f"不允许调用 DebugTalk 的内部方法：{func_name}()"
+        )
+
+    func = getattr(DebugTalk(), func_name, None)
+    if func is None or not callable(func):
+        raise PlaceholderError(
+            f"DebugTalk 里没有这个方法：{func_name}()"
+        )
+
+    try:
+        return func(*func_params)
+    except TypeError as e:
+        raise PlaceholderError(
+            f"调用 {func_name}({', '.join(func_params)}) 失败：{e}"
+        ) from e
 
 
-def _escape_json_text(text):
-    r"""把值转义成能安全嵌进 JSON 字符串的文本：\ → \\，`"` → \"。"""
-    return text.replace("\\", "\\\\").replace('"', '\\"')
+def _replace_in_string(text):
+    """
+    对**一个真实字符串**做 ${} 替换，返回原始类型或拼接后的字符串。
+
+    三种出口：
+      - 没有占位符         → 原字符串原样返回（不再 dump→loads 绕一圈）
+      - 恰好一个且独占整串 → 返回**原始类型**（int / list / None 原样透传）
+      - 占位符只占其中一段 → 逐段拼接成字符串（非 str 结果按 str 语义转换）
+
+    每轮取「当前最内层」的占位符展开，展开后重扫整串 —— 嵌套
+    （${f(${g()})}：内层先成文本，外层才成形）依赖这一点。
+
+    已知边界：替换**结果**里若含 ${，会被当作下一个占位符继续展开
+    （与改造前一致）。_MAX_REPLACE_ROUNDS 是这类自引用的保险丝。
+    """
+    if not isinstance(text, str) or "${" not in text:
+        return text
+
+    for _ in range(_MAX_REPLACE_ROUNDS):
+        found = _find_innermost_placeholder(text)
+        if found is None:
+            return text
+
+        start, end, func_name, func_params = found
+        value = _call_debugtalk(func_name, func_params)
+
+        # 整串恰为这一个占位符 → 直接返回原始类型（类型保真的关键）
+        if start == 0 and end == len(text) - 1:
+            return value
+
+        text = (
+            text[:start]
+            + _stringify_for_splice(value)
+            + text[end + 1:]
+        )
+
+    raise PlaceholderError(
+        f"变量替换超过 {_MAX_REPLACE_ROUNDS} 轮，疑似替换结果自引用："
+        f"{text[:120]!r}"
+    )
+
+
+def _walk(data):
+    """递归走到每个叶子值：容器重建，字符串交给 _replace_in_string。"""
+    if isinstance(data, dict):
+        return {key: _walk(value) for key, value in data.items()}
+    if isinstance(data, list):
+        return [_walk(item) for item in data]
+    if isinstance(data, str):
+        return _replace_in_string(data)
+    # int / float / bool / None 等标量：本来就保真，原样返回
+    return data
 
 
 def _stringify_for_splice(value):
     """
-    把一个替换结果转成可嵌入 JSON 文本的字符串。
+    把一个替换结果转成可拼进字符串的文本（占位符**只占字符串一段**时用）。
 
-    文本拼接语义（"/user/${a()}" → "/user/501"）要求字符串不加引号，
-    所以这里用「转义」而不是 json.dumps —— 与改造前的行为保持一致。
+    这是纯文本拼接语义（"/user/${a()}" → "/user/501"），不是 JSON 序列化：
+    现在值直接拼进真实字符串，不再经过 JSON 文本，所以**不做任何转义**。
     """
     if isinstance(value, str):
-        return _escape_json_text(value)
+        return value
     if value is None:
         return "null"
-    if isinstance(value, bool):
-        return "true" if value else "false"
     if isinstance(value, (int, float)):
         return repr(value)
+    # bool 用 Python 写法（True/False），与 str() 一致
+    if isinstance(value, bool):
+        return str(value)
     # list / dict 等其余类型：整体序列化成 JSON
-    return _escape_json_text(json.dumps(value, ensure_ascii=False))
+    return json.dumps(value, ensure_ascii=False)
 
 
 class ApiEngine:
@@ -226,65 +295,21 @@ class ApiEngine:
         """
         把 YAML 里的 ${func(args)} 替换成活的值。
 
-        算法：每次取「当前最内层」的一个占位符就地展开，直到没有为止。
-        - 多占位符：字符串里有多少个就展开多少个（如 /user/${a()},${b()}）
-        - 嵌套：靠"参数段内还含 ${ 就跳过、去看下一个 ${ "实现内层优先
-        - 整串恰为一个占位符：直接返回原始类型（int / list / None 原样透传）
-        - 其余情况：按字符串拼接语义替换，结果仍是字符串
+        算法：**递归遍历结构**，只在叶子字符串上做占位符替换。
+        - dict → 逐值递归重建；list → 逐元素递归重建
+        - 标量（int / float / bool / None）原样返回，类型天然保真
+        - 叶子字符串的处理见 _replace_in_string：
+            · 恰好一个占位符独占整串 → 返回原始类型
+            · 占位符只占一段（含多个占位符）→ 拼接成字符串
+            · 没有占位符 → 原样返回
 
-        注意：入参非 str 时会被 json.dumps 转义，所以取的参数要先反转义、
-        回填的值要先转义，否则含 " 或 \\ 的内容会把 JSON 拼坏。
+        为什么不再走"json.dumps → 文本替换 → json.loads"：
+            值一旦被摊平成 JSON 文本，替换进去的数字就会沾上 JSON 的引号
+            变成字符串（例：{"user_id": "${...}"} 里的 701 变成 "701"），
+            而且含 " 或 \\ 的值会把 JSON 拼坏、需要转义往返。
+            递归到叶子则不存在这些问题：类型不经过文本，也不需任何转义。
         """
-        str_data = data
-        if not isinstance(data, str):
-            str_data = json.dumps(data, ensure_ascii=False)
-
-        result = None
-        for _ in range(_MAX_REPLACE_ROUNDS):
-            if "${" not in str_data:
-                break
-
-            found = _find_innermost_placeholder(str_data)
-            if found is None:
-                raise PlaceholderError(
-                    f"占位符缺少配对的 '}}'：{str_data[:120]!r}"
-                )
-
-            start, end, func_name, func_params = found
-            func = getattr(DebugTalk(), func_name, None)
-            if func is None:
-                raise PlaceholderError(
-                    f"DebugTalk 里没有这个方法：{func_name}()\n"
-                    f"  占位符: {str_data[start:end + 1]}"
-                )
-
-            result = func(*func_params)
-
-            # 整串恰为这一个占位符 → 保留原始类型，不做字符串化
-            if start == 0 and str_data[end + 1:].strip() == "":
-                return result
-
-            str_data = (
-                str_data[:start]
-                + _stringify_for_splice(result)
-                + str_data[end + 1:]
-            )
-        else:
-            raise PlaceholderError(
-                f"变量替换超过 {_MAX_REPLACE_ROUNDS} 轮，疑似替换结果自引用："
-                f"{str_data[:120]!r}"
-            )
-
-        # 还原数据类型（仅 dict / list 入参需要）
-        if isinstance(data, (dict, list)):
-            try:
-                return json.loads(str_data)
-            except json.JSONDecodeError as e:
-                raise PlaceholderError(
-                    f"变量替换后已不是合法 JSON：{e}\n"
-                    f"  替换结果: {str_data[:200]!r}"
-                ) from e
-        return str_data
+        return _walk(data)
 
     # ═══════════════════════════════════════════════════════════
     # 引擎主循环

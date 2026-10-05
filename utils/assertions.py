@@ -241,12 +241,11 @@ def run_validations(resp, validations, **kwargs):
 # ═══════════════════════════════════════════════════════════
 
 def coerce_db_param(value):
-    """将 replace_load 反序列化后的字符串还原为适合 SQL 参数的类型。
+    """将 DB 验证的 where 值还原为适合 SQL 参数的类型。
 
-    问题背景：YAML 中的 `${get_runtime(created_user_id)}` 经过 replace_load 后，
-    数字 191 变成了字符串 "191"（因为 str(result) 拼接）。
-    MySQL 的 WHERE user_id = '191' 字符串与 bigint 列可能不匹配，
-    需要转回 int。
+    replace_load 已改为结构化替换，占位符独占整串时会直接返回原始类型
+    （int / bool），所以这里通常拿到什么就是什么。本函数只是**兜底**：
+    兼容 YAML 里写成字符串的数字（如 where: {user_id: "701"}）。
     """
     if not isinstance(value, str):
         return value
