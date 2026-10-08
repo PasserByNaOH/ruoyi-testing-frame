@@ -571,12 +571,8 @@ class ApiEngine:
         return resp
 
     # ═══════════════════════════════════════════════════════════
-    # 占位符
+    # 请求辅助
     # ═══════════════════════════════════════════════════════════
-
-    def extract_data_list(self, extract_rules, response_text):
-        """PHASE 2: 批量提取多个值，以列表形式存入 runtime.yaml。"""
-        raise NotImplementedError("extract_data_list 将在 Phase 2 实现")
 
     def inject_token(self, headers):
         """
@@ -591,12 +587,4 @@ class ApiEngine:
             headers["Authorization"] = TOKEN_PREFIX + token
             logs.info("已自动注入 Authorization header")
         return headers
-
-    def handle_file_upload(self, files):
-        """PHASE 4: 文件上传预处理。"""
-        raise NotImplementedError("handle_file_upload 将在 Phase 4 实现")
-
-    def attach_allure(self, name, content):
-        """PHASE 5: Allure 报告附件。"""
-        raise NotImplementedError("attach_allure 将在 Phase 5 实现")
 
