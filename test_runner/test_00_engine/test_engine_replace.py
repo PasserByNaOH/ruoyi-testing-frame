@@ -14,7 +14,6 @@ test_engine_replace.py —— ${} 变量替换引擎的单元测试（不依赖�
 import pytest
 
 from core.apiutil import ApiEngine, PlaceholderError
-from utils.debugtalk import DebugTalk
 
 # 用例里要写 ${...} 字面量，但源文件里直接写容易被编辑器／工具误处理，
 # 所以统一用这两个常量拼出来，可读性也不差。
@@ -27,6 +26,29 @@ def ph(expr):
     return OP + expr + CL
 
 
+# 单测不依赖 data/runtime.yaml —— 那是主用例的运行产物，而引擎单测跑在最前面
+# （test_00_engine），那时它还不存在。用一个固定值冒充 runtime，期望值才是确定的。
+FAKE_UID = 751
+
+
+@pytest.fixture(scope="module", autouse=True)
+def fake_runtime():
+    """
+    把 DebugTalk 的运行时读取来源换成固定值，完全不碰真实文件。
+
+    get_runtime 的实现是 `read_runtime(key)`，所以 patch
+    utils.debugtalk.read_runtime 即可覆盖到所有调用方。
+    """
+    import utils.debugtalk as debugtalk
+
+    original = debugtalk.read_runtime
+    debugtalk.read_runtime = lambda key: FAKE_UID
+    try:
+        yield
+    finally:
+        debugtalk.read_runtime = original
+
+
 @pytest.fixture(scope="module")
 def engine():
     return ApiEngine()
@@ -34,10 +56,8 @@ def engine():
 
 @pytest.fixture(scope="module")
 def uid():
-    """data/runtime.yaml 里的 created_user_id（int）。"""
-    value = DebugTalk().get_runtime("created_user_id")
-    assert value is not None, "runtime.yaml 缺少 created_user_id，请先跑一遍主用例"
-    return value
+    """本次用例使用的固定 userId。"""
+    return FAKE_UID
 
 
 # ═══════════════════════════════════════════════════════════

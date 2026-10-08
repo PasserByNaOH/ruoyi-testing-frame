@@ -5,11 +5,46 @@ import allure
 from utils.recordlog import logs
 
 # ═══════════════════════════════════════════════════════════
+# 响应解析辅助
+# ═══════════════════════════════════════════════════════════
+
+def try_parse_json(resp):
+    """
+    试着把响应解析成 JSON，失败返回 None（**不抛异常**）。
+
+    注意：这里**刻意不做任何判断**。解析不出来不是错误，只是一个事实；
+    这个事实该由断言（要知道自己在检查什么）来判定，而不是由工具函数决定
+    后面的检查跑不跑。
+
+    core/apiutil.py 也复用它（`from utils.assertions import ...`），
+    所以放在这里而不是那边 —— 反向导入会构成循环。
+    """
+    try:
+        return resp.json()
+    except Exception:
+        return None
+
+
+def _json_body_or_fail(resp, assertion_name):
+    """取响应的 JSON 体；不是合法 JSON 时给出可定位的断言失败信息。"""
+    body = try_parse_json(resp)
+    if body is None:
+        snippet = (resp.text or "")[:200]
+        content_type = resp.headers.get("Content-Type", "")
+        raise AssertionError(
+             f"{assertion_name} 断言失败：响应不是合法 JSON，无法解析\n"
+             f"  HTTP 状态码: {resp.status_code}\n"
+             f"  Content-Type: {content_type}\n"
+             f"  响应片段: {snippet}"
+        )
+    return body
+
+# ═══════════════════════════════════════════════════════════
 # HTTP 断言
 # ═══════════════════════════════════════════════════════════
 
 def assert_status_code(resp, rule, **kwargs):
-     """断言 HTTP 状态码。"""
+     """断言 HTTP 状态码。只看状态码，与响应体格式无关 —— 任何响应都能判。"""
      assert resp.status_code == rule["expected"], (
           f"HTTP 状态码断言失败\n"
           f"  预期: {rule['expected']}\n"
@@ -17,8 +52,8 @@ def assert_status_code(resp, rule, **kwargs):
      )
 
 def assert_body_code(resp, rule, **kwargs):
-     """断言若依业务状态码（body.code）。"""
-     actual = resp.json()
+     """断言若依业务状态码（body.code）。需要响应体是合法 JSON。"""
+     actual = _json_body_or_fail(resp, "body_code")
      assert actual.get("code") == rule["expected"], (
           f"body_code 断言失败\n"
           f"  预期 code: {rule['expected']}\n"
@@ -47,15 +82,17 @@ def assert_body_not_contains(resp, rule, **kwargs):
 
 
 def assert_token_not_empty(resp, rule, **kwargs):
-     """断言响应中包含非空 token。"""
-     token = resp.json().get("token", "")
+     """断言响应中包含非空 token。需要响应体是合法 JSON。"""
+     body = _json_body_or_fail(resp, "token_not_empty")
+     token = body.get("token", "")
      assert token != "", "登录成功但未返回 token"
 
 
 def assert_token_absent(resp, rule, **kwargs):
-     """断言响应中不包含 token（失败登录场景）。"""
-     assert "token" not in resp.json(), (
-          f"失败登录不应返回 token，实际返回: {resp.json().get('token')}"
+     """断言响应中不包含 token（失败登录场景）。需要响应体是合法 JSON。"""
+     body = _json_body_or_fail(resp, "token_absent")
+     assert "token" not in body, (
+          f"失败登录不应返回 token，实际返回: {body.get('token')}"
      )
 
 #   验证导出的二进制文件内容是否和数据库的数据相同
@@ -139,7 +176,7 @@ def assert_rows_in_scope(resp, rule, db=None, **kwargs):
     """
     assert db is not None, "rows_in_scope 需要 db 参数（specification_yaml 传入）"
 
-    body = resp.json()
+    body = _json_body_or_fail(resp, "rows_in_scope")
     rows = body.get("rows", [])
     username = rule["username"]
     dept_field = rule.get("dept_field", "deptId")

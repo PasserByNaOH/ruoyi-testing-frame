@@ -16,15 +16,13 @@ test_engine_extract.py —— 数据提取（extract）的单元测试（不依�
 """
 
 import json
-import os
+from unittest.mock import patch
 
 import pytest
-import yaml
 
-from conf.setting import FILE_PATH
 from core.apiutil import ApiEngine, _resolve_extract
 
-# extract_data 是引擎实例方法（它会写 runtime.yaml），单测里共用一个实例
+# extract_data 是引擎实例方法，单测里共用一个实例（写 runtime 已被 mock 掉）
 engine = ApiEngine()
 
 # ── 自造的响应文本，模拟若依的真实返回 ──
@@ -155,51 +153,47 @@ def test_unrecognized_expression_raises():
 # ═══════════════════════════════════════════════════════════
 # 五、extract_data 端到端：写 runtime + 失败不留半个状态
 # ═══════════════════════════════════════════════════════════
+#
+# 这里把 write_runtime 换成内存记录，**不碰真实的 data/runtime.yaml**：
+#   · 单测不该有真实文件副作用（跑完不该改动别人的运行状态）
+#   · 也不该依赖该文件的写权限（本项目已出现过权限导致的假失败）
+# 这样既能断言"写了什么"，也能断言"失败时什么都没写"。
 
-@pytest.fixture
-def restore_runtime():
-    """备份 data/runtime.yaml，测试结束后还原，避免污染别的用例。"""
-    path = FILE_PATH["RUNTIME"]
-    backup = None
-    if os.path.exists(path):
-        with open(path, "r", encoding="utf-8") as f:
-            backup = f.read()
-    try:
-        yield path
-    finally:
-        if backup is None:
-            if os.path.exists(path):
-                os.remove(path)
-        else:
-            with open(path, "w", encoding="utf-8") as f:
-                f.write(backup)
+WRITE_TARGET = "core.apiutil.write_runtime"
 
 
-def read_runtime(path):
-    with open(path, "r", encoding="utf-8") as f:
-        return yaml.safe_load(f) or {}
+def test_extract_data_writes_value():
+    with patch(WRITE_TARGET) as mocked:
+        engine.extract_data({"token": "$.token"}, RESP_TOKEN)
+    mocked.assert_called_once_with({"token": "abc.def.ghi"})
 
 
-def test_extract_data_writes_value(restore_runtime):
-    engine.extract_data({"token": "$.token"}, RESP_TOKEN)
-    assert read_runtime(restore_runtime)["token"] == "abc.def.ghi"
-
-
-def test_extract_data_raises_and_does_not_write(restore_runtime):
+def test_extract_data_raises_and_does_not_write():
     """失败时既要抛错，也不能把半成品写进 runtime。"""
-    before = read_runtime(restore_runtime)
-    with pytest.raises(RuntimeError):
-        engine.extract_data({"missing_key": "$.nope"}, RESP_TOKEN)
-    assert read_runtime(restore_runtime) == before, (
-        "提取失败不应写入 runtime.yaml"
-    )
+    with patch(WRITE_TARGET) as mocked:
+        with pytest.raises(RuntimeError):
+            engine.extract_data({"missing_key": "$.nope"}, RESP_TOKEN)
+    mocked.assert_not_called()
 
 
-def test_extract_data_stops_at_first_failure(restore_runtime):
+def test_extract_data_stops_at_first_failure():
     """多条规则时，前一条失败就应中止，不再处理后面的。"""
-    with pytest.raises(RuntimeError):
+    with patch(WRITE_TARGET) as mocked:
+        with pytest.raises(RuntimeError):
+            engine.extract_data(
+                {"bad": "$.nope", "good": "$.token"},
+                RESP_TOKEN,
+            )
+    mocked.assert_not_called()
+
+
+def test_extract_data_writes_every_rule():
+    """全部成功时，每条规则各写一次。"""
+    with patch(WRITE_TARGET) as mocked:
         engine.extract_data(
-            {"bad": "$.nope", "good": "$.token"},
-            RESP_TOKEN,
+            {"uid": "$.rows[0].userId", "rid": "$.rows[0].roleId"},
+            RESP_ROWS,
         )
-    assert "good" not in read_runtime(restore_runtime)
+    assert mocked.call_count == 2
+    mocked.assert_any_call({"uid": 701})
+    mocked.assert_any_call({"rid": 534})

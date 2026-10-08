@@ -1,14 +1,13 @@
 import json
 import re
 import configparser
-from json.decoder import JSONDecodeError
 
 import allure
 import jsonpath
 import requests
 
 from conf.setting import FILE_PATH, TOKEN_PREFIX
-from utils.assertions import run_validations
+from utils.assertions import run_validations, try_parse_json
 from utils.debugtalk import DebugTalk
 from utils.readyaml import get_runtime, write_runtime, clear_runtime
 from utils.recordlog import logs
@@ -426,42 +425,53 @@ class ApiEngine:
         )
 
         # ── Allure: 附着响应 ──
+        # 分成两步，互不牵连：
+        #   ① 贴响应到报告（能解析成 JSON 就贴 JSON，否则贴原始文本／二进制摘要）
+        #   ② 提取 + 断言 —— **无论响应是什么格式都要执行**
+        # 旧实现把这两步捆在一起、且按 Content-Type 分支：解析一失败就被异常
+        # 带走，断言一行都没跑（报错变成 JSONDecodeError，真实断言从没运行过）。
+        self._attach_response(resp)
+
+        # 提取数据（1.3 起：提取失败会抛错，不再静默）
+        if extract_rules:
+            self.extract_data(extract_rules, resp.text)
+
+        # 执行断言 —— 无条件执行
+        run_validations(resp, validations, db=db)
+
+        return resp
+
+    # ── 响应附着（只负责把响应放进报告，不做任何判断）──
+
+    def _attach_response(self, resp):
+        """
+        把响应附着到 Allure 报告。
+
+        只做"展示"这一件事，**不参与控制流**：解析不出 JSON 就退化成贴原始
+        文本，而不是抛异常——是否合法 JSON 该由断言去判断，不该在这里决定
+        后面的检查跑不跑。
+        """
         content_type = resp.headers.get("Content-Type", "")
+        title = f"响应 (HTTP {resp.status_code})"
 
-        if "json" in content_type:
-            try:
-                resp_body = resp.json()
-                allure.attach(
-                    json.dumps(resp_body, ensure_ascii=False, indent=2),
-                    f"响应 (HTTP {resp.status_code})",
-                    allure.attachment_type.JSON,
-                )
-                # 提取数据
-                if extract_rules:
-                    self.extract_data(extract_rules, resp.text)
-                # 执行断言
-                run_validations(resp, validations, db=db)
-            except JSONDecodeError:
-                logs.error("响应 JSON 解析失败")
-                raise
-
-        elif "octet-stream" in content_type:
+        if "octet-stream" in content_type or "spreadsheet" in content_type:
             allure.attach(
                 f"HTTP {resp.status_code}\nContent-Type: {content_type}\n"
                 f"文件大小: {len(resp.content)} bytes",
                 "响应 (二进制)",
                 allure.attachment_type.TEXT,
             )
+            return
 
-        else:
+        body = try_parse_json(resp)
+        if body is not None:
             allure.attach(
-                resp.text,
-                f"响应 (HTTP {resp.status_code})",
-                allure.attachment_type.TEXT,
+                json.dumps(body, ensure_ascii=False, indent=2),
+                title,
+                allure.attachment_type.JSON,
             )
-            run_validations(resp, validations, db=db)
-
-        return resp
+        else:
+            allure.attach(resp.text, title, allure.attachment_type.TEXT)
 
     # ═══════════════════════════════════════════════════════════
     # 数据提取
@@ -547,18 +557,16 @@ class ApiEngine:
             method=method, url=url, headers=headers, params=params,
         )
 
-        # ── Allure: 附着二进制响应 ──
-        content_type = resp.headers.get("Content-Type", "")
-        if "spreadsheet" in content_type or "octet-stream" in content_type:
-            allure.attach(
-                f"HTTP {resp.status_code}\nContent-Type: {content_type}\n"
-                f"文件大小: {len(resp.content)} bytes",
-                "响应 (二进制)",
-                allure.attachment_type.TEXT,
-            )
-            run_validations(resp, validations, db=db)
-        else:
-            logs.warning(f"预期二进制响应，实际 Content-Type: {content_type}")
+        # ── Allure: 附着响应 ──
+        # 与 specification_yaml 同理：附着只负责展示，断言**无条件执行**。
+        # 旧实现在"实际不是二进制"时只打一行 warning，一条断言都不跑 ——
+        # 而"导出失败返回了错误 JSON/HTML"正是最该让断言出场的时候。
+        self._attach_response(resp)
+
+        # 执行断言 —— 无条件执行
+        # 二进制导出用例的断言类型是 excel_content，它本来就判二进制，
+        # 不会因为响应不是二进制而无从判断（会直接报"不是有效的 xlsx"）。
+        run_validations(resp, validations, db=db)
 
         return resp
 
