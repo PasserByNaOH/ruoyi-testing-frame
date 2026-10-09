@@ -48,6 +48,36 @@ def apply_setup(case, redis_client):
         redis_client.set(key, value)
 
 
+def clean_pwd_error_count(redis_client):
+    """
+    清掉**所有**账号的密码错误计数，返回被清理的 key 列表。
+
+    为什么是"所有"而不是写死某个用户名：
+        计数 key 是 `pwd_err_cnt:<用户名>`，而"哪个用户名会产生计数"取决于用例
+        怎么写。实测：**只有"用户存在且密码错误"才会写**；用户不存在、停用用户、
+        已删除用户、空用户名都**不会**写（它们在前置校验/用户查询阶段就被拒了，
+        根本走不到密码校验那一步）。写死一个用户名，以后新增一条"换个账号输错
+        密码"的用例就会漏清 —— 那种残留会让"计数应等于 N"之类的断言在重复
+        运行时变红。
+
+    为什么删这一个 key 就够（它同时承载两件事）：
+        同一个 key 的**值**是错误次数，**有效期**是 10 分钟锁定倒计时
+        （`SysPasswordService.validate()` 用 setCacheObject(key, count, lockTime, MINUTES)）。
+        所以删掉它既清了计数、也解了锁 —— 这是"5次错误触发锁定"用例不会把锁
+        带进下一条用例的前提。
+
+    为什么用 scan_iter 而不是 keys：
+        `KEYS` 在大 keyspace 上会阻塞 Redis，生产环境是禁忌；`SCAN` 是增量遍历。
+        测试库虽然很小，但没必要留一个坏示范。
+    """
+    prefix = DebugTalk.PWD_ERR_KEY_PREFIX
+    stale_keys = list(redis_client.scan_iter(match=prefix + "*"))
+    if stale_keys:
+        redis_client.delete(*stale_keys)
+        logs.info(f"已清理密码错误计数 {len(stale_keys)} 个: {stale_keys}")
+    return stale_keys
+
+
 def verify_redis(redis_client, case):
     """
     校验用例声明的 Redis 状态变化（YAML 里的 redis_verify 块）。

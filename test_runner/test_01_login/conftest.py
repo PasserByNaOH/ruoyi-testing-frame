@@ -9,6 +9,7 @@ import pytest
 
 from utils.readyaml import clear_runtime
 from utils.recordlog import logs
+from test_runner.test_01_login.helpers import clean_pwd_error_count as _clean
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -21,9 +22,13 @@ def clean_runtime_on_start():
 
 @pytest.fixture(autouse=True)
 def clean_pwd_error_count(redis_client):
-    """每个测试后删除 LoginTestUser 的密码错误计数，保证用例间独立。"""
+    """
+    每个登录用例跑完后，清掉所有账号的密码错误计数，保证用例之间互不干扰。
+
+    具体逻辑与理由见 helpers.clean_pwd_error_count()（抽出去是为了可单测）。
+    """
     yield
-    redis_client.delete("pwd_err_cnt:LoginTestUser")
+    _clean(redis_client)
 
 
 # ═══════════════════════════════════════════════════════════
