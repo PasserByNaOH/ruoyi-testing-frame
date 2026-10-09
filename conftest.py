@@ -8,12 +8,27 @@ Phase 3: base_url + redis_client（session 级，所有子模块继承）
 import allure
 import pytest
 import redis
+import requests
 from configparser import ConfigParser
+from redis.backoff import NoBackoff
+from redis.retry import Retry
 from sshtunnel import SSHTunnelForwarder
 
 from conf.setting import FILE_PATH
 from utils.debugtalk import DebugTalk
 from utils.recordlog import logs
+
+# 探活用的短超时（秒）。不用 conf.setting 的 API_TIMEOUT（60 秒）——
+# 那是给业务请求的；"探查服务在不在"不该让人等一分钟。
+PROBE_TIMEOUT = 10
+
+# 连接阶段的超时也调短一点：连一个关着的端口，系统 2 秒就返回"拒绝"，
+# 没必要按 PROBE_TIMEOUT 干等。
+PROBE_CONNECT_TIMEOUT = 2
+
+# redis-py 8.x 默认会**自动重试**（默认 Retry + 指数退避），
+# 探活只想知道"现在通不通"，重试会把 2 秒的连接失败放大成 25 秒以上。
+PROBE_REDIS_RETRY = Retry(NoBackoff(), 0)
 
 
 def _read_config():
@@ -97,6 +112,114 @@ def redis_client(ssh_tunnel):
 
     r.close()
     logs.info("Redis 连接已关闭")
+
+
+# ═══════════════════════════════════════════════════════════
+# 开跑前的服务探活（Phase 1 / 1.9）
+# ═══════════════════════════════════════════════════════════
+
+def probe_backend(base_url, timeout=PROBE_TIMEOUT):
+    """
+    探一下后端应用是否活着。
+
+    返回 (ok, reason)：
+        (True,  None)   —— 通了
+        (False, "原因") —— 没通，原因可直接给人看
+
+    选 `/captchaImage` 是因为它**不需要认证、不需要验证码、也不改任何数据**
+    （Phase 0.2 已手工验证它返回 200）。
+
+    **本函数绝不抛异常**：它只负责"报告观察到什么"，至于要不要因此中止，
+    由调用方决定（异常会毁掉这个分工）。
+    """
+    url = base_url.rstrip("/") + "/captchaImage"
+    try:
+        resp = requests.get(
+            url, headers={"Accept": "application/json"},
+            timeout=(PROBE_CONNECT_TIMEOUT, timeout), verify=False,
+        )
+        if resp.status_code == 200:
+            return True, None
+        return False, f"{url} 返回 HTTP {resp.status_code}（预期 200）"
+    except requests.RequestException as e:
+        # 连接被拒 / 超时 / DNS 失败 / 代理错误 都归一成一句人话
+        return False, f"{url} 请求失败：{type(e).__name__}: {e}"
+
+
+def probe_redis(port, password=None, db=0, timeout=PROBE_TIMEOUT):
+    """
+    探一下 Redis 是否活着（经 SSH 隧道转发到本地端口）。
+
+    返回 (ok, reason)，同样**不抛异常**。
+    """
+    client = redis.Redis(
+        host="127.0.0.1", port=port, password=password or None, db=db,
+        decode_responses=True,
+        socket_connect_timeout=min(timeout, PROBE_CONNECT_TIMEOUT),
+        socket_timeout=timeout,
+        # 关掉 redis-py 默认的自动重试：探活只问"现在通不通"，
+        # 重试只会把失败从 2 秒拖成 25 秒以上（实测）
+        retry=PROBE_REDIS_RETRY,
+        retry_on_error=[],
+    )
+    try:
+        client.ping()
+        return True, None
+    except Exception as e:
+        return False, f"Redis(127.0.0.1:{port}) 连接失败：{type(e).__name__}: {e}"
+    finally:
+        try:
+            client.close()
+        except Exception:
+            pass
+
+
+@pytest.fixture(scope="session", autouse=True)
+def check_services_alive(ssh_tunnel, base_url):
+    """
+    开跑前确认"背后的东西都在"，不通就**整体中止并说清是哪一样不通**。
+
+    为什么需要它：框架原先默认"背后一切都是好的"，服务器挂掉时**不会有一句
+    "服务不可用"**，而是每条用例各报一次连接错误（实测一次是 89 条一模一样的
+    SSH 报错）—— 得自己从里面推断是环境问题而不是用例问题。
+
+    注意：**框架对硬故障本来就是正确失败的**（sendrequest 的 except 全部 raise），
+    所以这里不是"加容错"，只是把"83 条吵你"换成"一句话说清"。
+
+    为什么用 pytest.exit 而不是抛异常 / skip：
+        抛异常 → 每条用例各自 error 一次，还是刷屏；
+        skip  → 每条用例各自 skip 一次，还是刷屏；
+        pytest.exit → **整体中止**，只输出这一段原因。
+
+    探活范围：SSH 隧道（本 fixture 依赖 ssh_tunnel，隧道建不起来这里根本到不了）
+    ＋ 后端应用 ＋ Redis。一次覆盖三样。
+    """
+    logs.info("开跑前探活：检查后端与 Redis 是否可用")
+
+    ok, reason = probe_backend(base_url)
+    if not ok:
+        pytest.exit(
+            "被测服务不可用，已中止本次运行（不是用例失败，是环境没就绪）\n"
+            f"  后端: {reason}\n"
+            "  提示: 服务器重启后需要手工恢复 —— "
+            "docker start ruoyi-mysql ruoyi-redis，再启动 ruoyi-admin",
+            returncode=1,
+        )
+
+    cf = _read_config()
+    ok, reason = probe_redis(
+        ssh_tunnel["redis_port"],
+        password=cf.get("REDIS", "password"),
+        db=cf.getint("REDIS", "db"),
+    )
+    if not ok:
+        pytest.exit(
+            "被测服务不可用，已中止本次运行（不是用例失败，是环境没就绪）\n"
+            f"  Redis: {reason}",
+            returncode=1,
+        )
+
+    logs.info("探活通过：后端与 Redis 均可用，开始跑用例")
 
 
 # ═══════════════════════════════════════════════════════════
