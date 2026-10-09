@@ -13,21 +13,63 @@ REPORT_TEMP = os.path.join(PROJECT_ROOT, "report", "temp")
 REPORT_OUTPUT = os.path.join(PROJECT_ROOT, "report", "allure")
 
 
+def _jdk_major_version(jdk_root):
+    """
+    取 JDK 的主版本号：**优先读 release 文件（事实），读不到再退回目录名（猜测）**。
+
+    为什么以 release 文件为准：Java 的版本号有两种写法，靠目录名猜会猜错 ——
+        21.0.7     → 主版本 21
+        17.0.8     → 主版本 17
+        1.8.0_151  → 主版本 8    ← 目录常被命名为 "jdk8"，但它其实是 "1.x" 格式
+    实测本机 `E:\\Env\\jdk8` 的 release 里就写着 `1.8.0_151`。
+
+    返回 0 表示"认不出这是哪个版本"，调用方据此把它排到最后并跳过，
+    **绝不抛异常**（旧实现在目录名不含 `jdk<数字>` 时会 AttributeError 崩掉，
+    例如 `jdk-17`、`jdkabc`）。
+    """
+    release = os.path.join(jdk_root, "release")
+    try:
+        with open(release, "r", encoding="utf-8", errors="replace") as f:
+            for line in f:
+                if line.startswith("JAVA_VERSION"):
+                    version = line.split("=", 1)[1].strip().strip('"')
+                    matched = re.match(r"1\.(\d+)", version)   # 1.8.0_151 → 8
+                    if matched:
+                        return int(matched.group(1))
+                    matched = re.match(r"(\d+)", version)      # 21.0.7 → 21
+                    return int(matched.group(1)) if matched else 0
+    except OSError:
+        pass   # release 不存在（如 jlink 精简版）或读不了 → 退回目录名
+
+    # 兜底：目录名。`-?` 是为了容忍 jdk-17 这种写法
+    matched = re.search(r"jdk-?(\d+)", jdk_root)
+    return int(matched.group(1)) if matched else 0
+
+
 def _find_java():
-    """自动探测本机 Java，返回 (java_home, bin_dir) 或 (None, None)。"""
-    # 搜索 E:\Env\jdk*（按数字版号降序，高版本优先）
-    jdk_dirs = glob.glob("E:\\Env\\jdk*")
-    jdk_dirs.sort(key=lambda p: int(re.search(r"jdk(\d+)", p).group(1)), reverse=True)
-    search_roots = jdk_dirs
+    """
+    自动探测本机 Java，返回 (java_home, bin_dir) 或 (None, None)。
+
+    只在 JAVA_HOME 未设置、且 PATH 里也没有 java 时才会被调用
+    （见 _get_env），探测失败由调用方降级为"直接用 PATH 里的 java"。
+    """
+    # 只在**目录**里找，且按真实版本降序（高版本优先）。
+    # 过滤非目录是必要的：实测 E:\Env 下混着 `jdk8.7z` 这种压缩包。
+    candidates = [p for p in glob.glob("E:\\Env\\jdk*") if os.path.isdir(p)]
+
     prog_java = os.path.join(
         os.environ.get("ProgramFiles", "C:\\Program Files"), "Java"
     )
     if os.path.isdir(prog_java):
-        search_roots.extend(
+        candidates.extend(
             os.path.join(prog_java, d) for d in os.listdir(prog_java)
         )
 
-    for jdk_root in search_roots:
+    def sort_key(path):
+        # 版本降序；同版本时按路径排序，保证结果稳定可复现
+        return (-_jdk_major_version(path), path)
+
+    for jdk_root in sorted(candidates, key=sort_key):
         java_exe = os.path.join(jdk_root, "bin", "java.exe")
         if os.path.isfile(java_exe):
             return jdk_root, os.path.join(jdk_root, "bin")
