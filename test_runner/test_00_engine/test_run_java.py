@@ -127,14 +127,70 @@ def test_prefix_before_jdk_still_matches(tmp_path):
 
 
 # ═══════════════════════════════════════════════════════════
-# 四、对着真实本机环境验证（不造数据）
+# 四、对着**本机真实环境**验证（不造数据）
 # ═══════════════════════════════════════════════════════════
+#
+# ⚠️ 这一段**不能写死任何路径**。之前这里硬编码了 `E:\Env\jdk*`（开发机的目录），
+#    换一台机器跑必红。现在一律通过 run.py 自己的入口去问：
+#      · JDK 候选从哪来 → run_module._configured_java_search_dirs()（读 config.ini）
+#      · 探测结果是什么 → run_module._find_java()
+#    本机没有 JDK 时**跳过**而不是失败 —— 探测不到 Java 本身不是缺陷。
+
+
+def _real_jdk_candidates():
+    """真实存在的 JDK 候选目录（来自配置 + JAVA_HOME + Program Files）。"""
+    dirs = run_module._configured_java_search_dirs()
+    found = []
+    for search_dir in dirs:
+        if os.path.isdir(search_dir):
+            found.extend(
+                p for p in glob.glob(os.path.join(search_dir, "jdk*"))
+                if os.path.isdir(p)
+            )
+    java_home = os.environ.get("JAVA_HOME", "").strip()
+    if java_home and os.path.isdir(java_home):
+        found.append(java_home)
+    return found
+
+
+def test_configured_search_dirs_is_a_list():
+    """[JAVA] search_dirs 必须能被解析成列表（缺失/为空都不应报错）。"""
+    dirs = run_module._configured_java_search_dirs()
+    assert isinstance(dirs, list)
+    assert all(isinstance(d, str) for d in dirs)
+
+
+def test_find_java_returns_none_when_nothing_available(monkeypatch):
+    """
+    ★ 换一台**完全没装 JDK** 的机器：_find_java() 必须返回 (None, None) 且不抛异常。
+
+    这条就是为"面试用的笔记本拉下代码跑测试"那种场景准备的 ——
+    探测不到 Java 不该让测试变红，只该让 JDK 相关用例跳过。
+    """
+    monkeypatch.setattr(run_module, "_configured_java_search_dirs", lambda: [])
+    monkeypatch.delenv("JAVA_HOME", raising=False)
+    # 屏蔽 Windows 常见安装位置，模拟"整机没有 JDK"
+    monkeypatch.setenv("ProgramFiles", r"Z:\no-such-program-files")
+
+    java_home, java_bin = run_module._find_java()
+
+    assert java_home is None and java_bin is None, (
+        f"没有任何 JDK 时应返回 (None, None)，实际 ({java_home}, {java_bin})"
+    )
+
+
+def test_real_jdk_candidates_empty_is_safe(monkeypatch):
+    """候选为空时，辅助函数要返回空列表（测试据此 skip，而不是报错）。"""
+    monkeypatch.setattr(run_module, "_configured_java_search_dirs", lambda: [])
+    monkeypatch.delenv("JAVA_HOME", raising=False)
+    assert _real_jdk_candidates() == []
+
 
 def test_real_env_jdk_dirs_all_parse():
-    """本机 E:\\Env 下每个真实 JDK 目录都应能解析出版本号（非 0）。"""
-    real = [p for p in glob.glob("E:\\Env\\jdk*") if os.path.isdir(p)]
+    """配置里每个真实 JDK 目录都应能解析出版本号（非 0）。"""
+    real = _real_jdk_candidates()
     if not real:
-        pytest.skip("本机 E:\\Env 下没有 jdk* 目录")
+        pytest.skip("本机未找到 JDK 目录（配置 [JAVA] search_dirs / JAVA_HOME 都为空）")
     for path in real:
         version = run_module._jdk_major_version(path)
         assert version > 0, f"{path} 解析出版本号 {version}"
@@ -142,29 +198,44 @@ def test_real_env_jdk_dirs_all_parse():
 
 def test_real_find_java_picks_highest_version():
     """
-    真的调用 _find_java()：本机装了 jdk8/jdk17/jdk21，
-    应选中版本最高的 jdk21（且它确实有 bin/java.exe）。
+    真的调用 _find_java()：应选中候选里版本最高的那个（且它确实有 bin/java.exe）。
+
+    这一段全部靠"实际候选"来算，不预设版本号 —— 因为不同机器装的 JDK 不同。
     """
     java_home, java_bin = run_module._find_java()
     if java_home is None:
         pytest.skip("本机未探测到 JDK")
-    assert os.path.isfile(os.path.join(java_bin, "java.exe"))
-    assert run_module._jdk_major_version(java_home) == max(
-        run_module._jdk_major_version(p)
-        for p in glob.glob("E:\\Env\\jdk*")
-        if os.path.isdir(p)
-    ), f"探测到的是 {java_home}，但它不是候选里版本最高的"
+
+    java_exe = os.path.join(java_bin, "java.exe")
+    if not os.path.isfile(java_exe):
+        # 非 Windows（比如 Linux 上叫 java）时只校验探测结果非空
+        java_exe = os.path.join(java_bin, "java")
+    assert os.path.isfile(java_exe), f"探测到 {java_bin}，但里面没有 java 可执行文件"
+
+    candidates = _real_jdk_candidates()
+    if candidates:
+        expected = max(run_module._jdk_major_version(p) for p in candidates)
+        assert run_module._jdk_major_version(java_home) == expected, (
+            f"探测到 {java_home}（版本 {run_module._jdk_major_version(java_home)}），"
+            f"但候选里最高版本是 {expected}"
+        )
 
 
 def test_real_find_java_does_not_crash_on_archive_file():
     """
-    ★ 本机 E:\\Env 下确实存在 `jdk8.7z`（压缩包，不是目录）。
+    search_dirs 下可能混着 `jdk8.7z` 这类**压缩包**（不是目录）。
     _find_java 必须不受它影响、也不崩。
     """
-    archives = [p for p in glob.glob("E:\\Env\\jdk*") if not os.path.isdir(p)]
     java_home, _ = run_module._find_java()   # 不抛异常即通过
-    if archives:
-        assert java_home is not None
+    for search_dir in run_module._configured_java_search_dirs():
+        if not os.path.isdir(search_dir):
+            continue
+        archives = [p for p in glob.glob(os.path.join(search_dir, "jdk*"))
+                    if not os.path.isdir(p)]
+        if archives:
+            assert java_home is not None, (
+                f"{search_dir} 下有压缩包 {archives}，但 _find_java 没探测到任何 JDK"
+            )
 
 
 def test_missing_release_falls_back_to_directory_name(tmp_path):

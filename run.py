@@ -1,5 +1,6 @@
 """run.py —— 全量测试 + Allure 报告"""
 
+import configparser
 import glob
 import os
 import re
@@ -11,6 +12,21 @@ PROJECT_ROOT = os.path.dirname(__file__)
 PYTHON = sys.executable
 REPORT_TEMP = os.path.join(PROJECT_ROOT, "report", "temp")
 REPORT_OUTPUT = os.path.join(PROJECT_ROOT, "report", "allure")
+
+# JDK 的搜索目录从 conf/config.ini 的 [JAVA] search_dirs 读（多个用 ; 分隔）。
+# 不写死在代码里 —— 换一台机器只改配置。
+CONFIG_PATH = os.path.join(PROJECT_ROOT, "conf", "config.ini")
+
+
+def _configured_java_search_dirs():
+    """读 conf/config.ini 的 [JAVA] search_dirs，返回目录列表（不存在则空列表）。"""
+    cf = configparser.ConfigParser()
+    try:
+        cf.read(CONFIG_PATH, encoding="utf-8")
+        raw = cf.get("JAVA", "search_dirs", fallback="")
+    except (configparser.Error, OSError):
+        return []
+    return [d.strip() for d in raw.split(";") if d.strip()]
 
 
 def _jdk_major_version(jdk_root):
@@ -50,13 +66,31 @@ def _find_java():
     """
     自动探测本机 Java，返回 (java_home, bin_dir) 或 (None, None)。
 
+    候选来源（按优先级）：
+        ① `JAVA_HOME` 环境变量 —— 最标准、也最该被尊重
+        ② `conf/config.ini` 的 `[JAVA] search_dirs` 下每个 `jdk*` 目录
+        ③ `%ProgramFiles%\\Java\\*`（Windows 常见安装位置）
+
     只在 JAVA_HOME 未设置、且 PATH 里也没有 java 时才会被调用
     （见 _get_env），探测失败由调用方降级为"直接用 PATH 里的 java"。
     """
-    # 只在**目录**里找，且按真实版本降序（高版本优先）。
-    # 过滤非目录是必要的：实测 E:\Env 下混着 `jdk8.7z` 这种压缩包。
-    candidates = [p for p in glob.glob("E:\\Env\\jdk*") if os.path.isdir(p)]
+    candidates = []
 
+    # ① JAVA_HOME 优先：它已经是"JDK 根目录"，不需要再猜
+    java_home_env = os.environ.get("JAVA_HOME", "").strip()
+    if java_home_env and os.path.isdir(java_home_env):
+        candidates.append(java_home_env)
+
+    # ② 配置里声明的搜索目录：扫每个目录下的 jdk*
+    #    只保留**目录**是必要的：实测某机器的 E:\Env 下混着 `jdk8.7z` 这种压缩包
+    for search_dir in _configured_java_search_dirs():
+        if os.path.isdir(search_dir):
+            candidates.extend(
+                p for p in glob.glob(os.path.join(search_dir, "jdk*"))
+                if os.path.isdir(p)
+            )
+
+    # ③ Windows 常见安装位置
     prog_java = os.path.join(
         os.environ.get("ProgramFiles", "C:\\Program Files"), "Java"
     )
