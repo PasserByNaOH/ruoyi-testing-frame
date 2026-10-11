@@ -131,38 +131,36 @@ def test_prefix_before_jdk_still_matches(tmp_path):
 # ═══════════════════════════════════════════════════════════
 #
 # ⚠️ 这一段**不能写死任何路径**。之前这里硬编码了 `E:\Env\jdk*`（开发机的目录），
-#    换一台机器跑必红。现在一律通过 run.py 自己的入口去问：
-#      · JDK 候选从哪来 → run_module._configured_java_search_dirs()（读 config.ini）
-#      · 探测结果是什么 → run_module._find_java()
-#    本机没有 JDK 时**跳过**而不是失败 —— 探测不到 Java 本身不是缺陷。
-
-
-def _has_java_executable(jdk_root):
-    """目录下要有 java 可执行文件才算有效候选（与 _find_java() 口径一致）。"""
-    return (
-        os.path.isfile(os.path.join(jdk_root, "bin", "java.exe"))
-        or os.path.isfile(os.path.join(jdk_root, "bin", "java"))
-    )
+#    换一台机器跑必红。现在一律通过 run.py 自己的入口去问。
+#
+# ⚠️ 而且**判断标准必须和实现共用同一个函数**（run_module._looks_like_jdk）。
+#    曾经这里自己写了"只按目录名收候选"，结果把空壳目录也算进来，
+#    与 _find_java（会过滤掉没有 java 的目录）算出的"最高版本"不一致 —— 一遇到
+#    名字像 JDK 但不是 JDK 的目录就红。
+#
+#    2026-10-11 两边各自修了这个问题（Gitee 上 d2d02f5 在本文件里加了
+#    `_has_java_executable`；本地把判据抽到 run.py 的 `_looks_like_jdk`）。
+#    最终取**共用 run.py 函数**这一版 —— 判据写在实现里，测试复用它，
+#    才能真正做到"两边用同一把尺子"，而不是各写一份会长歪的逻辑。
 
 
 def _real_jdk_candidates():
     """
-    真实存在的 JDK 候选目录（来自配置 + JAVA_HOME）。
+    真实存在的 JDK 候选目录（与 run.py 的候选集合保持完全一致）。
 
-    只保留**带 java 可执行文件**的目录，和 _find_java() 的过滤口径一致 ——
-    否则像 `jdk-21_windows-x64_bin` 这种解压包装目录（真 JDK 在下一层）
-    会被目录名误判成版本 21，导致期望值与实际探测结果不一致。
+    判断标准直接用 `run_module._looks_like_jdk` —— 即"目录里确实有 java 可执行文件"。
+    自己另写一套判断是错的源头（如 `jdk-21_windows-x64_bin` 这种解压包装目录，
+    真 JDK 在下一层，只按目录名会被误判成版本 21），别再这么做。
     """
-    dirs = run_module._configured_java_search_dirs()
     found = []
-    for search_dir in dirs:
+    for search_dir in run_module._configured_java_search_dirs():
         if os.path.isdir(search_dir):
             found.extend(
                 p for p in glob.glob(os.path.join(search_dir, "jdk*"))
-                if os.path.isdir(p) and _has_java_executable(p)
+                if run_module._looks_like_jdk(p)
             )
     java_home = os.environ.get("JAVA_HOME", "").strip()
-    if java_home and os.path.isdir(java_home) and _has_java_executable(java_home):
+    if run_module._looks_like_jdk(java_home):
         found.append(java_home)
     return found
 
@@ -172,6 +170,61 @@ def test_configured_search_dirs_is_a_list():
     dirs = run_module._configured_java_search_dirs()
     assert isinstance(dirs, list)
     assert all(isinstance(d, str) for d in dirs)
+
+
+# ── 4.1 "像 JDK 但不是 JDK"的目录必须被排除（本次修的缺陷）──
+
+@pytest.mark.parametrize("case, expect_looks_like", [
+    ("有 bin/java.exe",                     True),
+    ("只有目录没有 java",                    False),
+    ("有 release 文件但没 java",             False),
+    ("整个是个文件（压缩包）",                False),
+    ("路径根本不存在",                       False),
+])
+def test_looks_like_jdk(tmp_path, case, expect_looks_like):
+    """
+    ★ _looks_like_jdk 是"这个目录到底是不是 JDK"的唯一判据。
+
+    覆盖实测踩过的两类脏数据：
+      · `jdk8.7z` —— 是**文件**不是目录
+      · 名字像 JDK 但是**空壳**目录（解压失败残留）—— 只看 isdir 会误收
+    """
+    if case == "路径根本不存在":
+        path = os.path.join(str(tmp_path), "jdk-does-not-exist")
+    elif case == "整个是个文件（压缩包）":
+        path = os.path.join(str(tmp_path), "jdk8.7z")
+        open(path, "w").close()
+    elif case == "有 release 文件但没 java":
+        path = make_jdk(str(tmp_path), "jdk22", release_version="22.0.1",
+                        with_java=False)
+    else:
+        path = make_jdk(str(tmp_path), "jdk21",
+                        release_version="21.0.7",
+                        with_java=(case == "有 bin/java.exe"))
+
+    assert run_module._looks_like_jdk(path) is expect_looks_like
+
+
+def test_empty_shell_dir_is_not_a_candidate(tmp_path):
+    """
+    ★ 回归保护：一个"名字像 JDK 但没有 java"的空壳目录，
+    不应进入候选，也不应影响最高版本的判断。
+    """
+    # 造一个版本号看起来最高、却没有 java 的空壳
+    make_jdk(str(tmp_path), "jdk99", release_version="99.0.1", with_java=False)
+    # 再造一个真实可用的低版本
+    real = make_jdk(str(tmp_path), "jdk17", release_version="17.0.8")
+
+    candidates = [
+        p for p in glob.glob(os.path.join(str(tmp_path), "jdk*"))
+        if run_module._looks_like_jdk(p)
+    ]
+    assert [os.path.basename(p) for p in candidates] == ["jdk17"]
+    assert _real_jdk_version(candidates) == 17, "空壳不应把最高版本抬到 99"
+
+
+def _real_jdk_version(candidates):
+    return max(run_module._jdk_major_version(p) for p in candidates)
 
 
 def test_find_java_returns_none_when_nothing_available(monkeypatch):

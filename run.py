@@ -62,13 +62,41 @@ def _jdk_major_version(jdk_root):
     return int(matched.group(1)) if matched else 0
 
 
+def _java_executable(jdk_root):
+    """
+    返回该目录下的 java 可执行文件路径；不是 JDK 目录则返回 None。
+
+    Windows 上是 `bin\\java.exe`，其它平台是 `bin/java`。
+    """
+    for name in ("java.exe", "java"):
+        candidate = os.path.join(jdk_root, "bin", name)
+        if os.path.isfile(candidate):
+            return candidate
+    return None
+
+
+def _looks_like_jdk(path):
+    """
+    判断一个路径是否**真的是 JDK 根目录**（即里面确实有 java 可执行文件）。
+
+    为什么不能只看"是不是目录"：
+        实测踩过两次 ——
+          · 某些目录下混着 `jdk8.7z` 这种**压缩包**（不是目录）
+          · 还有名字像 JDK、实际是**空壳**的目录（如解压失败残留的 `jdk-17`）
+        只看 os.path.isdir 会把空壳也收进候选；它虽然会被后面的 isfile 过滤掉，
+        但 `_jdk_major_version()` 会给它解出一个版本号参与排序，
+        导致**候选集合是脏的**（测试与实现据此算出的"最高版本"也会不一致）。
+    """
+    return os.path.isdir(path) and _java_executable(path) is not None
+
+
 def _find_java():
     """
     自动探测本机 Java，返回 (java_home, bin_dir) 或 (None, None)。
 
     候选来源（按优先级）：
         ① `JAVA_HOME` 环境变量 —— 最标准、也最该被尊重
-        ② `conf/config.ini` 的 `[JAVA] search_dirs` 下每个 `jdk*` 目录
+        ② `conf/config.ini` 的 `[JAVA] search_dirs` 下每个**真的是 JDK** 的 `jdk*` 目录
         ③ `%ProgramFiles%\\Java\\*`（Windows 常见安装位置）
 
     只在 JAVA_HOME 未设置、且 PATH 里也没有 java 时才会被调用
@@ -78,16 +106,15 @@ def _find_java():
 
     # ① JAVA_HOME 优先：它已经是"JDK 根目录"，不需要再猜
     java_home_env = os.environ.get("JAVA_HOME", "").strip()
-    if java_home_env and os.path.isdir(java_home_env):
+    if _looks_like_jdk(java_home_env):
         candidates.append(java_home_env)
 
-    # ② 配置里声明的搜索目录：扫每个目录下的 jdk*
-    #    只保留**目录**是必要的：实测某机器的 E:\Env 下混着 `jdk8.7z` 这种压缩包
+    # ② 配置里声明的搜索目录：扫每个目录下的 jdk*，只收"真的是 JDK"的
     for search_dir in _configured_java_search_dirs():
         if os.path.isdir(search_dir):
             candidates.extend(
                 p for p in glob.glob(os.path.join(search_dir, "jdk*"))
-                if os.path.isdir(p)
+                if _looks_like_jdk(p)
             )
 
     # ③ Windows 常见安装位置
@@ -97,6 +124,7 @@ def _find_java():
     if os.path.isdir(prog_java):
         candidates.extend(
             os.path.join(prog_java, d) for d in os.listdir(prog_java)
+            if _looks_like_jdk(os.path.join(prog_java, d))
         )
 
     def sort_key(path):
