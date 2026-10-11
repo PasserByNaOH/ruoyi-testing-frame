@@ -137,18 +137,32 @@ def test_prefix_before_jdk_still_matches(tmp_path):
 #    本机没有 JDK 时**跳过**而不是失败 —— 探测不到 Java 本身不是缺陷。
 
 
+def _has_java_executable(jdk_root):
+    """目录下要有 java 可执行文件才算有效候选（与 _find_java() 口径一致）。"""
+    return (
+        os.path.isfile(os.path.join(jdk_root, "bin", "java.exe"))
+        or os.path.isfile(os.path.join(jdk_root, "bin", "java"))
+    )
+
+
 def _real_jdk_candidates():
-    """真实存在的 JDK 候选目录（来自配置 + JAVA_HOME + Program Files）。"""
+    """
+    真实存在的 JDK 候选目录（来自配置 + JAVA_HOME）。
+
+    只保留**带 java 可执行文件**的目录，和 _find_java() 的过滤口径一致 ——
+    否则像 `jdk-21_windows-x64_bin` 这种解压包装目录（真 JDK 在下一层）
+    会被目录名误判成版本 21，导致期望值与实际探测结果不一致。
+    """
     dirs = run_module._configured_java_search_dirs()
     found = []
     for search_dir in dirs:
         if os.path.isdir(search_dir):
             found.extend(
                 p for p in glob.glob(os.path.join(search_dir, "jdk*"))
-                if os.path.isdir(p)
+                if os.path.isdir(p) and _has_java_executable(p)
             )
     java_home = os.environ.get("JAVA_HOME", "").strip()
-    if java_home and os.path.isdir(java_home):
+    if java_home and os.path.isdir(java_home) and _has_java_executable(java_home):
         found.append(java_home)
     return found
 
